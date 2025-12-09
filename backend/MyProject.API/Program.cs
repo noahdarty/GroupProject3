@@ -72,7 +72,10 @@ var app = builder.Build();
 app.UseCors("AllowFrontend");
 
 // Enable Swagger in all environments (including Heroku)
-app.UseSwagger();
+app.UseSwagger(c =>
+{
+    c.RouteTemplate = "swagger/{documentName}/swagger.json";
+});
 app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "VulnRadar API v1");
