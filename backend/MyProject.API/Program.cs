@@ -18,7 +18,9 @@ if (!string.IsNullOrEmpty(databaseUrl))
 // If no DATABASE_URL, check for direct connection string env var (for manual Heroku config)
 else
 {
-    var directConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
+    // Try double underscore first (correct format), then single underscore (common mistake)
+    var directConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection") 
+        ?? Environment.GetEnvironmentVariable("ConnectionStrings_DefaultConnection");
     if (!string.IsNullOrEmpty(directConnectionString))
     {
         builder.Configuration["ConnectionStrings:DefaultConnection"] = directConnectionString;
