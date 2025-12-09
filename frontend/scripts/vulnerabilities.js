@@ -621,8 +621,11 @@ async function openAssignModal(vuln) {
     priorityBadge.textContent = priority;
   }
 
-  // Load company users
-  await loadCompanyUsers();
+  // Get TLP rating for filtering
+  const tlpRating = vuln.TlpRating || vuln.tlp_rating || 'GREEN';
+
+  // Load company users with TLP filter
+  await loadCompanyUsers(tlpRating);
 
   // Show modal
   const assignModal = new bootstrap.Modal(document.getElementById('assignTaskModal'));
@@ -630,7 +633,8 @@ async function openAssignModal(vuln) {
 }
 
 // Load company users for assignment dropdown
-async function loadCompanyUsers() {
+// tlpRating: Filter users by TLP rating if vulnerability is RED
+async function loadCompanyUsers(tlpRating = 'GREEN') {
   try {
     const token = localStorage.getItem('firebaseToken');
     if (!token) {
@@ -707,11 +711,54 @@ async function loadCompanyUsers() {
     
     select.innerHTML = '<option value="">Select a user...</option>';
     
+    // Helper function to get valid TLP rating from user
+    const getUserTlp = (user) => {
+      let userTlp = (user.TlpRating || user.tlp_rating || 'GREEN').toUpperCase();
+      // Validate TLP rating - only allow RED, AMBER, GREEN
+      if (userTlp !== 'RED' && userTlp !== 'AMBER' && userTlp !== 'GREEN') {
+        // If invalid, set based on role
+        const role = (user.Role || user.role || 'employee').toLowerCase();
+        if (role === 'admin') userTlp = 'RED';
+        else if (role === 'manager') userTlp = 'AMBER';
+        else userTlp = 'GREEN';
+      }
+      return userTlp;
+    };
+    
     // Filter out admin users (they shouldn't be assigned tasks)
-    const nonAdminUsers = users.filter(user => {
+    let nonAdminUsers = users.filter(user => {
       const role = (user.Role || user.role || '').toLowerCase();
       return role !== 'admin';
     });
+    
+    // Filter users based on vulnerability TLP rating
+    // RED vulnerabilities → only RED users
+    // AMBER vulnerabilities → AMBER or RED users (managers/admins)
+    // GREEN vulnerabilities → all users (employees, managers, admins)
+    const vulnTlpUpper = (tlpRating || 'GREEN').toUpperCase();
+    if (vulnTlpUpper === 'RED') {
+      nonAdminUsers = nonAdminUsers.filter(user => {
+        const userTlp = getUserTlp(user);
+        return userTlp === 'RED';
+      });
+      
+      if (nonAdminUsers.length === 0) {
+        select.innerHTML = '<option value="">No users with RED TLP rating available. RED vulnerabilities can only be assigned to users with RED TLP rating.</option>';
+        return;
+      }
+    } else if (vulnTlpUpper === 'AMBER') {
+      // AMBER can be assigned to AMBER or RED users (managers/admins)
+      nonAdminUsers = nonAdminUsers.filter(user => {
+        const userTlp = getUserTlp(user);
+        return userTlp === 'AMBER' || userTlp === 'RED';
+      });
+      
+      if (nonAdminUsers.length === 0) {
+        select.innerHTML = '<option value="">No users with AMBER or RED TLP rating available. AMBER vulnerabilities can only be assigned to managers/admins.</option>';
+        return;
+      }
+    }
+    // GREEN vulnerabilities can be assigned to anyone, no filtering needed
     
     if (nonAdminUsers.length === 0) {
       select.innerHTML = '<option value="">No employees or managers available</option>';
@@ -725,7 +772,11 @@ async function loadCompanyUsers() {
       const firstName = user.FirstName || user.firstName || '';
       const lastName = user.LastName || user.lastName || '';
       const name = (firstName && lastName) ? `${firstName} ${lastName}` : email;
-      option.textContent = `${name} (${user.Role || user.role || 'employee'})`;
+      
+      // Get valid TLP rating (using same helper logic as filtering)
+      const userTlp = getUserTlp(user);
+      
+      option.textContent = `${name} (${user.Role || user.role || 'employee'}, TLP:${userTlp})`;
       select.appendChild(option);
     });
   } catch (error) {

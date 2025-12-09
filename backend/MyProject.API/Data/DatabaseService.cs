@@ -174,6 +174,18 @@ public class DatabaseService
                 validRole = "employee"; // Default to employee
             }
 
+            // Set TLP rating based on role
+            // Employee: GREEN, Manager: AMBER, Admin: RED
+            string tlpRating = "GREEN";
+            if (validRole == "admin")
+            {
+                tlpRating = "RED";
+            }
+            else if (validRole == "manager")
+            {
+                tlpRating = "AMBER";
+            }
+
             // Get company name if companyId is provided
             string? companyName = null;
             if (companyId.HasValue && companyId.Value > 0)
@@ -191,7 +203,7 @@ public class DatabaseService
             // Create new user
             var insertQuery = @"
                 INSERT INTO Users (username, email, password_hash, full_name, role, tlp_rating, firebase_uid, company_name, is_active)
-                VALUES (@username, @email, @passwordHash, @fullName, @role, 'GREEN', @firebaseUid, @companyName, TRUE)";
+                VALUES (@username, @email, @passwordHash, @fullName, @role, @tlpRating, @firebaseUid, @companyName, TRUE)";
 
             using var insertCommand = new MySqlCommand(insertQuery, connection);
             insertCommand.Parameters.AddWithValue("@username", email.Split('@')[0]);
@@ -199,6 +211,7 @@ public class DatabaseService
             insertCommand.Parameters.AddWithValue("@passwordHash", "firebase_auth"); // Placeholder since Firebase handles auth
             insertCommand.Parameters.AddWithValue("@fullName", displayName ?? email.Split('@')[0]);
             insertCommand.Parameters.AddWithValue("@role", validRole);
+            insertCommand.Parameters.AddWithValue("@tlpRating", tlpRating);
             insertCommand.Parameters.AddWithValue("@firebaseUid", firebaseUid);
             insertCommand.Parameters.AddWithValue("@companyName", companyName ?? (object)DBNull.Value);
 

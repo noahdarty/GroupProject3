@@ -989,12 +989,26 @@ app.MapPost("/api/user/update", async (HttpRequest request, UpdateUserRequest up
             return Results.NotFound(new { message = "User not found" });
         }
 
-        // Update user role
+        // Update user role and TLP rating
         if (!string.IsNullOrEmpty(updateRequest.Role))
         {
-            var updateRoleQuery = "UPDATE Users SET role = @role WHERE id = @userId";
+            // Set TLP rating based on role
+            // Employee: GREEN, Manager: AMBER, Admin: RED
+            string tlpRating = "GREEN";
+            var roleLower = updateRequest.Role.ToLower();
+            if (roleLower == "admin")
+            {
+                tlpRating = "RED";
+            }
+            else if (roleLower == "manager")
+            {
+                tlpRating = "AMBER";
+            }
+            
+            var updateRoleQuery = "UPDATE Users SET role = @role, tlp_rating = @tlpRating WHERE id = @userId";
             using var updateRoleCommand = new MySqlCommand(updateRoleQuery, connection);
             updateRoleCommand.Parameters.AddWithValue("@role", updateRequest.Role);
+            updateRoleCommand.Parameters.AddWithValue("@tlpRating", tlpRating);
             updateRoleCommand.Parameters.AddWithValue("@userId", userId);
             await updateRoleCommand.ExecuteNonQueryAsync();
         }
@@ -1948,17 +1962,21 @@ app.MapPost("/api/tasks", async (HttpRequest request, AssignTaskRequest taskRequ
             return Results.Forbid();
         }
 
-        // Get company ID from vulnerability
-        var vulnQuery = "SELECT vendor_id FROM Vulnerabilities WHERE id = @vulnId LIMIT 1";
+        // Get vulnerability details including TLP rating
+        var vulnQuery = "SELECT vendor_id, tlp_rating FROM Vulnerabilities WHERE id = @vulnId LIMIT 1";
         using var vulnCommand = new MySqlCommand(vulnQuery, connection);
         vulnCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
-        var vendorId = await vulnCommand.ExecuteScalarAsync();
-
-        if (vendorId == null)
+        using var vulnReader = await vulnCommand.ExecuteReaderAsync();
+        
+        if (!await vulnReader.ReadAsync())
         {
             await connection.CloseAsync();
             return Results.BadRequest(new { Success = false, Message = "Vulnerability not found" });
         }
+        
+        var vendorId = vulnReader.GetInt32("vendor_id");
+        var vulnTlpRating = vulnReader.IsDBNull(vulnReader.GetOrdinal("tlp_rating")) ? "GREEN" : vulnReader.GetString("tlp_rating");
+        await vulnReader.CloseAsync();
 
         // Get company ID from user
         var companyQuery = "SELECT company_id FROM UserCompanies WHERE user_id = @userId LIMIT 1";
@@ -1985,6 +2003,36 @@ app.MapPost("/api/tasks", async (HttpRequest request, AssignTaskRequest taskRequ
             await connection.CloseAsync();
             return Results.BadRequest(new { Success = false, Message = "Task already assigned to this user" });
         }
+
+        // Check TLP rating compatibility
+        // RED vulnerabilities can only be assigned to RED users
+        // AMBER vulnerabilities can only be assigned to AMBER or RED users (managers/admins)
+        // GREEN vulnerabilities can be assigned to anyone
+        var userTlpQuery = "SELECT tlp_rating FROM Users WHERE id = @assignedToUserId LIMIT 1";
+        using var userTlpCommand = new MySqlCommand(userTlpQuery, connection);
+        userTlpCommand.Parameters.AddWithValue("@assignedToUserId", taskRequest.AssignedToUserId);
+        var userTlpRating = await userTlpCommand.ExecuteScalarAsync() as string;
+        var userTlpUpper = userTlpRating?.ToUpper() ?? "GREEN";
+        var vulnTlpUpper = vulnTlpRating?.ToUpper() ?? "GREEN";
+        
+        if (vulnTlpUpper == "RED")
+        {
+            if (userTlpUpper != "RED")
+            {
+                await connection.CloseAsync();
+                return Results.BadRequest(new { Success = false, Message = "RED TLP vulnerabilities can only be assigned to users with RED TLP rating" });
+            }
+        }
+        else if (vulnTlpUpper == "AMBER")
+        {
+            // AMBER can be assigned to AMBER or RED users (managers/admins)
+            if (userTlpUpper != "AMBER" && userTlpUpper != "RED")
+            {
+                await connection.CloseAsync();
+                return Results.BadRequest(new { Success = false, Message = "AMBER TLP vulnerabilities can only be assigned to users with AMBER or RED TLP rating (managers/admins)" });
+            }
+        }
+        // GREEN vulnerabilities can be assigned to anyone, no check needed
 
         // Insert task
         var insertQuery = @"
@@ -2289,7 +2337,7 @@ app.MapGet("/api/companies/{companyId}/users", async (HttpRequest request, int c
 
         // Get users in company (exclude admins - they don't need to be assigned tasks)
         var query = @"
-            SELECT u.id, u.email, u.role, u.full_name
+            SELECT u.id, u.email, u.role, u.full_name, u.tlp_rating
             FROM Users u
             INNER JOIN UserCompanies uc ON u.id = uc.user_id
             WHERE uc.company_id = @companyId
@@ -2321,7 +2369,8 @@ app.MapGet("/api/companies/{companyId}/users", async (HttpRequest request, int c
                 Role = reader.IsDBNull(reader.GetOrdinal("role")) ? "employee" : reader.GetString("role"),
                 FirstName = firstName,
                 LastName = lastName,
-                FullName = fullName
+                FullName = fullName,
+                TlpRating = reader.IsDBNull(reader.GetOrdinal("tlp_rating")) ? "GREEN" : reader.GetString("tlp_rating")
             });
         }
         
@@ -2683,9 +2732,14 @@ app.MapGet("/api/vulnerabilities/company", async (HttpRequest request, FirebaseS
         }
 
         // Build additional filter for assigned vulnerabilities
-        // All users (including admins) should not see assigned vulnerabilities on the main vulnerabilities page
-        // Exclude vulnerabilities that have an active task (not closed)
-        string assignedFilter = "AND NOT EXISTS (SELECT 1 FROM Tasks t2 WHERE t2.vulnerability_id = v.id AND t2.company_id = @companyId AND t2.status != 'closed')";
+        // Admins should see all vulnerabilities (including assigned ones) to manage assignments
+        // Employees and managers should not see assigned vulnerabilities on the main vulnerabilities page
+        string assignedFilter = "";
+        if (userRole != "admin")
+        {
+            // Exclude vulnerabilities that have an active task (not closed) for non-admins
+            assignedFilter = "AND NOT EXISTS (SELECT 1 FROM Tasks t2 WHERE t2.vulnerability_id = v.id AND t2.company_id = @companyId AND t2.status != 'closed')";
+        }
 
         var vulnerabilitiesQuery = @"
             SELECT DISTINCT
