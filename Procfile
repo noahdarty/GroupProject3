@@ -1,1 +1,1 @@
-web: cd backend/MyProject.API && if [ -d "./publish" ]; then cd publish && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet MyProject.API.dll; else ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet bin/Release/net8.0/MyProject.API.dll; fi
+web: cd backend/MyProject.API && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet bin/Release/net8.0/MyProject.API.dll
