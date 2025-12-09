@@ -239,8 +239,14 @@ app.MapPost("/api/auth/verify-token", async (VerifyTokenRequest request, Firebas
         // Log email verification status for debugging
         Console.WriteLine($"User {firebaseUser.Email} - EmailVerified: {firebaseUser.EmailVerified}");
         
-        // Check if email is verified
-        if (!firebaseUser.EmailVerified)
+        // Log role and companyId for debugging
+        Console.WriteLine($"VerifyToken - Email: {firebaseUser.Email}, Role: {request.Role}, CompanyId: {request.CompanyId}");
+        
+        // Check if this is a signup (Role or CompanyId provided) - allow saving even if email not verified
+        bool isSignup = !string.IsNullOrEmpty(request.Role) || request.CompanyId.HasValue;
+        
+        // If email is not verified AND this is not a signup, reject
+        if (!firebaseUser.EmailVerified && !isSignup)
         {
             return Results.BadRequest(new AuthResponse
             {
@@ -248,9 +254,6 @@ app.MapPost("/api/auth/verify-token", async (VerifyTokenRequest request, Firebas
                 Message = $"Email address not verified. Current status: {firebaseUser.EmailVerified}. Please check your email and verify your account, then try logging in again."
             });
         }
-        
-        // Log role and companyId for debugging
-        Console.WriteLine($"VerifyToken - Email: {firebaseUser.Email}, Role: {request.Role}, CompanyId: {request.CompanyId}");
         
         // Get or create user in database
         var dbUser = await dbService.GetUserByFirebaseUidAsync(firebaseUser.Uid);
@@ -289,24 +292,6 @@ app.MapPost("/api/auth/verify-token", async (VerifyTokenRequest request, Firebas
                 // Refresh user data after update
                 dbUser = await dbService.GetUserByFirebaseUidAsync(firebaseUser.Uid);
                 Console.WriteLine($"User updated successfully - Email: {dbUser?.Email}, Role: {dbUser?.Role}, Company: {dbUser?.CompanyName}");
-            }
-            
-            // If role is provided and different from current role, update it
-            if (!string.IsNullOrEmpty(request.Role) && 
-                request.Role.ToLower() != dbUser.Role?.ToLower())
-            {
-                Console.WriteLine($"Updating user role from '{dbUser.Role}' to '{request.Role}'");
-                await dbService.CreateOrUpdateUserFromFirebaseAsync(
-                    firebaseUser.Uid,
-                    firebaseUser.Email,
-                    firebaseUser.DisplayName,
-                    request.Role,
-                    request.CompanyId
-                );
-                
-                // Get updated user
-                dbUser = await dbService.GetUserByFirebaseUidAsync(firebaseUser.Uid);
-                Console.WriteLine($"User role updated - Email: {dbUser?.Email}, Role: {dbUser?.Role}");
             }
         }
 
