@@ -64,7 +64,9 @@ builder.Services.AddCors(options =>
                 "http://127.0.0.1:5500", 
                 "http://localhost:5500",
                 "https://vulnradar.herokuapp.com",
-                "http://vulnradar.herokuapp.com"
+                "http://vulnradar.herokuapp.com",
+                "https://vulnradar2-6c4dc22c8f92.herokuapp.com",
+                "http://vulnradar2-6c4dc22c8f92.herokuapp.com"
               )
               .AllowAnyMethod()
               .AllowAnyHeader()
