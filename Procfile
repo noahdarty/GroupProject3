@@ -1,2 +1,1 @@
-release: cd backend/MyProject.API && dotnet publish -c Release -o ./publish || true
-web: cd backend/MyProject.API/publish && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet MyProject.API.dll || cd ../bin/Release/net8.0 && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet MyProject.API.dll
+web: cd $HOME && cd backend/MyProject.API && if [ -d "./publish" ]; then cd publish && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet MyProject.API.dll; elif [ -d "./bin/Release/net8.0" ]; then cd bin/Release/net8.0 && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet MyProject.API.dll; else find . -name "MyProject.API.dll" -type f | head -1 | xargs dirname | xargs -I {} sh -c 'cd {} && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet MyProject.API.dll'; fi
