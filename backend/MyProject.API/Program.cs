@@ -784,7 +784,10 @@ app.MapPost("/api/user/vendors", async (HttpRequest request, FirebaseService fir
         if (companyId == null)
         {
             await connection.CloseAsync();
-            return Results.BadRequest(new { Success = false, Message = "User has no company assigned" });
+            return Results.BadRequest(new { 
+                Success = false, 
+                Message = "User has no company assigned. Please select a company first. If you're an admin, you can link yourself to a company using the company selection or contact support." 
+            });
         }
 
         // Log received vendor request for debugging

@@ -20,8 +20,13 @@ window.initVendorSelection = async function initVendorSelection() {
   }
 
   // Don't automatically show the section - it will be shown when link is clicked
-  // Just load the data
-  await ensureUserCompany();
+  // Check if user has company first
+  const hasCompany = await ensureUserCompany();
+  if (!hasCompany) {
+    // Company selection will be shown by ensureUserCompany
+    return;
+  }
+  
   await loadVendors();
   await loadUserVendors();
   setupVendorSelection();
@@ -30,7 +35,10 @@ window.initVendorSelection = async function initVendorSelection() {
 async function ensureUserCompany() {
   try {
     const token = localStorage.getItem('firebaseToken');
-    if (!token) return;
+    if (!token) {
+      console.error('No auth token found');
+      return false;
+    }
 
     const response = await fetch(`${window.API_BASE_URL}/api/user/company`, {
       headers: {
@@ -40,15 +48,50 @@ async function ensureUserCompany() {
 
     if (!response.ok) {
       console.error(`Failed to get user company: ${response.status} ${response.statusText}`);
-      return;
+      return false;
     }
 
     const data = await response.json();
     if (data.Success || data.success) {
-      console.log('User company ready:', data.Company || data.company);
+      const company = data.Company || data.company;
+      console.log('User company ready:', company);
+      
+      // If no company, show company selection
+      if (!company) {
+        console.warn('User has no company assigned. Showing company selection.');
+        showCompanySelectionRequired();
+        return false;
+      }
+      
+      return true;
     }
+    
+    return false;
   } catch (error) {
     console.error('Error ensuring user company:', error);
+    return false;
+  }
+}
+
+function showCompanySelectionRequired() {
+  // Hide vendor selection section
+  const vendorSection = document.getElementById('vendorSelectionSection');
+  if (vendorSection) {
+    vendorSection.classList.add('d-none');
+  }
+  
+  // Show company selection section
+  const companySection = document.getElementById('companySelectionSection');
+  if (companySection) {
+    companySection.classList.remove('d-none');
+    
+    // Initialize company selection if function exists
+    if (typeof window.initCompanySelection === 'function') {
+      window.initCompanySelection();
+    }
+  } else {
+    // If company selection section doesn't exist, show alert
+    alert('You need to select a company before choosing vendors. Please refresh the page and select a company.');
   }
 }
 
@@ -376,6 +419,23 @@ async function saveVendors() {
         UseCaseDescriptions: useCaseDescriptions
       })
     });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ message: 'Failed to save vendors' }));
+      const errorMessage = errorData.Message || errorData.message || 'Failed to save vendors';
+      
+      // If user has no company, show company selection
+      if (errorMessage.includes('no company assigned') || errorMessage.includes('no company')) {
+        showAlert('error', 'You need to select a company before choosing vendors. Please link your account to a company first.');
+        showCompanySelectionRequired();
+      } else {
+        showAlert('error', errorMessage);
+      }
+      
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Vendors';
+      return;
+    }
 
     const data = await response.json();
 
