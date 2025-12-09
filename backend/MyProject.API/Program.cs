@@ -28,7 +28,15 @@ else
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo 
+    { 
+        Title = "VulnRadar API", 
+        Version = "v1",
+        Description = "Vulnerability Radar API"
+    });
+});
 
 // Configure JSON serialization
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -61,7 +69,11 @@ var app = builder.Build();
 // Configure the HTTP request pipeline.
 // Enable Swagger in all environments (including Heroku)
 app.UseSwagger();
-app.UseSwaggerUI();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "VulnRadar API v1");
+    c.RoutePrefix = "swagger";
+});
 
 app.UseCors("AllowFrontend");
 
@@ -74,11 +86,11 @@ app.MapGet("/", () => Results.Ok(new {
 .WithName("Root")
 .WithOpenApi();
 
-// Only redirect to HTTPS in production
-if (!app.Environment.IsDevelopment())
-{
-app.UseHttpsRedirection();
-}
+// Don't use HTTPS redirection on Heroku - Heroku handles HTTPS at the load balancer
+// if (!app.Environment.IsDevelopment())
+// {
+// app.UseHttpsRedirection();
+// }
 
 // Helper function to determine TLP rating based on realistic factors
 // TLP is about information sensitivity and distribution, NOT severity
