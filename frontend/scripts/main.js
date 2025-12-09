@@ -386,6 +386,10 @@ window.initApp = async function initApp() {
     }
     
     // Show Company Vendors page by default for non-admin users
+    // Make sure tasks section is hidden
+    const tasksSection = document.getElementById('tasksSection');
+    if (tasksSection) tasksSection.classList.add('d-none');
+    
     if (companyVendorsSection) {
       companyVendorsSection.classList.remove('d-none');
       if (companyVendorsNavLink) companyVendorsNavLink.classList.add('active');
