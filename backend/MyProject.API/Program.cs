@@ -69,15 +69,16 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
+app.UseCors("AllowFrontend");
+
 // Enable Swagger in all environments (including Heroku)
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "VulnRadar API v1");
     c.RoutePrefix = "swagger";
+    c.DisplayRequestDuration();
 });
-
-app.UseCors("AllowFrontend");
 
 // Root endpoint to test if app is running
 app.MapGet("/", () => Results.Ok(new { 
