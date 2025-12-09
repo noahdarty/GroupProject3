@@ -180,6 +180,21 @@ public class DatabaseService
                 }
             }
 
+            // Update company_name if companyId is provided
+            if (companyId.HasValue && companyId.Value > 0)
+            {
+                var companyQuery = "SELECT name FROM Companies WHERE id = @companyId LIMIT 1";
+                using var companyCommand = new MySqlCommand(companyQuery, connection);
+                companyCommand.Parameters.AddWithValue("@companyId", companyId.Value);
+                var companyNameResult = await companyCommand.ExecuteScalarAsync();
+                if (companyNameResult != null)
+                {
+                    var companyName = companyNameResult.ToString();
+                    updateFields.Add("company_name = @companyName");
+                    updateParams.Add("@companyName", companyName);
+                }
+            }
+
             var updateQuery = $"UPDATE Users SET {string.Join(", ", updateFields)} WHERE email = @email";
             using var updateCommand = new MySqlCommand(updateQuery, connection);
             foreach (var param in updateParams)
@@ -188,6 +203,22 @@ public class DatabaseService
             }
 
             await updateCommand.ExecuteNonQueryAsync();
+
+            // Link user to company if companyId is provided (for existing users too)
+            if (companyId.HasValue && companyId.Value > 0)
+            {
+                var existingUserId = Convert.ToInt32(userId);
+                var linkQuery = @"
+                    INSERT INTO UserCompanies (user_id, company_id, is_primary)
+                    VALUES (@userId, @companyId, TRUE)
+                    ON DUPLICATE KEY UPDATE is_primary = TRUE";
+                
+                using var linkCommand = new MySqlCommand(linkQuery, connection);
+                linkCommand.Parameters.AddWithValue("@userId", existingUserId);
+                linkCommand.Parameters.AddWithValue("@companyId", companyId.Value);
+                await linkCommand.ExecuteNonQueryAsync();
+            }
+
             return true;
         }
         else
