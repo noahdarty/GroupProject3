@@ -381,17 +381,8 @@ window.initApp = async function initApp() {
       });
     }
     
-    // Initialize company vendors display for non-admin users
-    if (typeof window.initCompanyVendors === 'function') {
-      console.log('Calling initCompanyVendors');
-      window.initCompanyVendors();
-    } else {
-      console.error('initCompanyVendors function not found');
-    }
-    
     // Show Company Vendors page by default for non-admin users
-    // Make sure tasks section is hidden
-    const tasksSection = document.getElementById('tasksSection');
+    // Make sure tasks section is hidden (already hidden above, but ensure it stays hidden)
     if (tasksSection) tasksSection.classList.add('d-none');
     
     if (companyVendorsSection) {
@@ -401,6 +392,14 @@ window.initApp = async function initApp() {
       if (typeof window.loadCompanyVendorsForPage === 'function') {
         await window.loadCompanyVendorsForPage();
       }
+    }
+    
+    // Initialize company vendors display for non-admin users (after showing the section)
+    if (typeof window.initCompanyVendors === 'function') {
+      console.log('Calling initCompanyVendors');
+      window.initCompanyVendors();
+    } else {
+      console.error('initCompanyVendors function not found');
     }
   }
 }
