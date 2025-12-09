@@ -1,6 +1,6 @@
 // Vendor Selection Module (declare once globally)
-if (typeof window.window.API_BASE_URL === 'undefined') {
-  window.window.API_BASE_URL = 'http://localhost:5155';
+if (typeof window.API_BASE_URL === 'undefined') {
+  window.API_BASE_URL = 'http://localhost:5155';
 }
 
 let allVendors = [];
@@ -117,7 +117,15 @@ async function loadUserVendors() {
 
 function renderVendors() {
   const container = document.getElementById('vendorsList');
-  if (!container) return;
+  if (!container) {
+    console.error('vendorsList container not found!');
+    return;
+  }
+
+  if (allVendors.length === 0) {
+    container.innerHTML = '<div class="alert alert-warning">No vendors loaded. Please refresh the page.</div>';
+    return;
+  }
 
   const filterType = document.getElementById('vendorTypeFilter')?.value || 'all';
   
@@ -135,10 +143,8 @@ function renderVendors() {
     return type === filterType.toLowerCase();
   });
 
-  console.log(`Rendering ${filteredVendors.length} vendors (filter: ${filterType})`);
-  
   if (filteredVendors.length === 0) {
-    container.innerHTML = '<p class="text-muted">No vendors found.</p>';
+    container.innerHTML = '<p class="text-muted">No vendors found matching the selected filter.</p>';
     return;
   }
 
@@ -163,112 +169,161 @@ function renderVendors() {
   // Show "Both" vendors first
   if (bothVendors.length > 0) {
     html += '<div class="mb-4"><h5 class="mb-3">🔧💻 Hardware & Software Vendors</h5>';
-    html += bothVendors.map(vendor => createVendorCard(vendor)).join('');
+    html += bothVendors.map(vendor => createVendorSelectionCard(vendor)).join('');
     html += '</div>';
   }
 
   // Show hardware-only vendors
   if (hardwareOnly.length > 0) {
     html += '<div class="mb-4"><h5 class="mb-3">🔧 Hardware Vendors</h5>';
-    html += hardwareOnly.map(vendor => createVendorCard(vendor)).join('');
+    html += hardwareOnly.map(vendor => createVendorSelectionCard(vendor)).join('');
     html += '</div>';
   }
 
   // Show software-only vendors
   if (softwareOnly.length > 0) {
     html += '<div class="mb-4"><h5 class="mb-3">💻 Software Vendors</h5>';
-    html += softwareOnly.map(vendor => createVendorCard(vendor)).join('');
+    html += softwareOnly.map(vendor => createVendorSelectionCard(vendor)).join('');
     html += '</div>';
   }
 
   container.innerHTML = html;
 }
 
-function createVendorCard(vendor) {
+function createVendorSelectionCard(vendor) {
   const vendorId = vendor.Id || vendor.id;
   const vendorName = vendor.Name || vendor.name;
   const vendorType = vendor.VendorType || vendor.vendorType;
   const vendorDescription = vendor.Description || vendor.description;
   const isSelected = selectedVendorIds.has(vendorId);
 
-  return `
-    <div class="card mb-3 vendor-card ${isSelected ? 'border-primary' : ''}">
+  // Get badge color based on vendor type
+  let badgeColor = 'secondary';
+  if (vendorType) {
+    const typeLower = vendorType.toLowerCase();
+    if (typeLower === 'hardware') badgeColor = 'primary';
+    else if (typeLower === 'software') badgeColor = 'success';
+    else if (typeLower === 'both') badgeColor = 'info';
+  }
+
+  // Ensure vendorId is valid
+  if (!vendorId || isNaN(vendorId)) {
+    console.error('Invalid vendor ID in createVendorCard:', vendor);
+    return '';
+  }
+
+  // Build the checkbox HTML directly in the template literal
+  const checkedAttr = isSelected ? 'checked' : '';
+  
+  // Create the card HTML with checkbox
+  const cardHtml = `
+    <div class="card mb-3 vendor-card ${isSelected ? 'border-primary border-2' : ''}">
       <div class="card-body">
-        <div class="form-check">
-          <input 
-            class="form-check-input vendor-checkbox" 
-            type="checkbox" 
-            value="${vendorId}" 
-            id="vendor-${vendorId}"
-            ${isSelected ? 'checked' : ''}
-          />
-          <label class="form-check-label w-100" for="vendor-${vendorId}">
-            <div class="d-flex justify-content-between align-items-start">
-              <div class="flex-grow-1">
-                <h6 class="mb-1">${vendorName}</h6>
-                <span class="badge bg-${vendorType.toLowerCase() === 'hardware' ? 'primary' : 'success'} mb-2">
-                  ${vendorType}
-                </span>
-                ${vendorDescription ? `<p class="text-muted small mb-0">${vendorDescription}</p>` : ''}
-              </div>
+        <div class="d-flex align-items-start">
+          <div class="me-3" style="flex-shrink: 0; padding-top: 0.25rem;">
+            <input class="form-check-input vendor-checkbox" type="checkbox" value="${vendorId}" id="vendor-${vendorId}" ${checkedAttr} style="width: 1.5rem !important; height: 1.5rem !important; margin: 0 !important; cursor: pointer !important; display: block !important; opacity: 1 !important; visibility: visible !important; position: relative !important; z-index: 1 !important;" />
+          </div>
+          <div class="flex-grow-1">
+            <label class="form-check-label w-100" for="vendor-${vendorId}" style="cursor: pointer;">
+              <h6 class="mb-1 fw-bold">${escapeHtml(vendorName)}</h6>
+              <span class="badge bg-${badgeColor} mb-2">${escapeHtml(vendorType || 'Unknown')}</span>
+              ${vendorDescription ? `<p class="text-muted small mb-0 mt-1">${escapeHtml(vendorDescription)}</p>` : ''}
+            </label>
+            <div class="mt-3 use-case-input" style="display: ${isSelected ? 'block' : 'none'};">
+              <label for="useCase-${vendorId}" class="form-label small fw-semibold">How do you use this vendor?</label>
+              <textarea 
+                class="form-control form-control-sm" 
+                id="useCase-${vendorId}" 
+                rows="2" 
+                placeholder="Describe your use case (optional)"
+              ></textarea>
             </div>
-          </label>
-        </div>
-        <div class="mt-2 use-case-input" style="display: ${isSelected ? 'block' : 'none'};">
-          <label for="useCase-${vendorId}" class="form-label small">How do you use this vendor?</label>
-          <textarea 
-            class="form-control form-control-sm" 
-            id="useCase-${vendorId}" 
-            rows="2" 
-            placeholder="Describe your use case (optional)"
-          ></textarea>
+          </div>
         </div>
       </div>
     </div>
   `;
+  
+  return cardHtml;
+}
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 function setupVendorSelection() {
   const vendorsList = document.getElementById('vendorsList');
-  if (!vendorsList) return;
+  if (!vendorsList) {
+    console.error('vendorsList container not found in setupVendorSelection');
+    return;
+  }
 
-    // Handle checkbox changes
-    vendorsList.addEventListener('change', (e) => {
-      if (e.target.classList.contains('vendor-checkbox')) {
-        const vendorId = parseInt(e.target.value, 10);
-        if (isNaN(vendorId)) {
-          console.error('Invalid vendor ID:', e.target.value);
-          return;
-        }
-        const useCaseInput = document.getElementById(`useCase-${vendorId}`);
-        
-        if (e.target.checked) {
-          selectedVendorIds.add(vendorId);
-          if (useCaseInput) {
-            useCaseInput.closest('.use-case-input').style.display = 'block';
-          }
-          e.target.closest('.vendor-card').classList.add('border-primary');
-        } else {
-          selectedVendorIds.delete(vendorId);
-          if (useCaseInput) {
-            useCaseInput.closest('.use-case-input').style.display = 'none';
-            useCaseInput.value = '';
-          }
-          e.target.closest('.vendor-card').classList.remove('border-primary');
-        }
-      }
-    });
+  // Remove old event listeners by cloning the element (this removes all listeners)
+  // But we'll use event delegation on the container, so we can add it fresh each time
+  // Actually, let's use event delegation which works even when content is replaced
+  
+  // Handle checkbox changes (use event delegation - works even when HTML is replaced)
+  vendorsList.removeEventListener('change', handleCheckboxChange);
+  vendorsList.addEventListener('change', handleCheckboxChange);
 
   // Handle filter change
   const filter = document.getElementById('vendorTypeFilter');
   if (filter) {
+    filter.removeEventListener('change', renderVendors);
     filter.addEventListener('change', renderVendors);
   }
 
   // Handle save button
   const saveBtn = document.getElementById('saveVendorsBtn');
   if (saveBtn) {
+    saveBtn.removeEventListener('click', saveVendors);
     saveBtn.addEventListener('click', saveVendors);
+  }
+  
+  // Always re-render vendors when setup is called (in case vendors were loaded)
+  renderVendors();
+}
+
+// Separate handler function for checkbox changes
+function handleCheckboxChange(e) {
+  if (e.target.classList.contains('vendor-checkbox')) {
+    const vendorId = parseInt(e.target.value, 10);
+    if (isNaN(vendorId)) {
+      console.error('Invalid vendor ID:', e.target.value);
+      return;
+    }
+    const useCaseInput = document.getElementById(`useCase-${vendorId}`);
+    const vendorCard = e.target.closest('.vendor-card');
+    
+    if (e.target.checked) {
+      selectedVendorIds.add(vendorId);
+      if (useCaseInput) {
+        const useCaseContainer = useCaseInput.closest('.use-case-input');
+        if (useCaseContainer) {
+          useCaseContainer.style.display = 'block';
+        }
+      }
+      if (vendorCard) {
+        vendorCard.classList.add('border-primary', 'border-2');
+      }
+    } else {
+      selectedVendorIds.delete(vendorId);
+      if (useCaseInput) {
+        const useCaseContainer = useCaseInput.closest('.use-case-input');
+        if (useCaseContainer) {
+          useCaseContainer.style.display = 'none';
+        }
+        useCaseInput.value = '';
+      }
+      if (vendorCard) {
+        vendorCard.classList.remove('border-primary', 'border-2');
+      }
+    }
+    console.log('Vendor selection updated:', Array.from(selectedVendorIds));
   }
 }
 
@@ -363,4 +418,5 @@ function showAlert(type, message) {
     alertDiv.classList.add('d-none');
   }, 5000);
 }
+
 

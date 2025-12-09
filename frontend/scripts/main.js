@@ -112,6 +112,7 @@ window.initApp = async function initApp() {
   const adminSection = document.getElementById('adminSection');
   const vendorSection = document.getElementById('vendorSelectionSection');
   const myVendorsSection = document.getElementById('myVendorsSection');
+  const vulnerabilitiesSection = document.getElementById('vulnerabilitiesSection');
   
   if (userRole === 'admin') {
     console.log('Showing admin section');
@@ -123,6 +124,7 @@ window.initApp = async function initApp() {
     if (vendorSection) vendorSection.classList.add('d-none');
     if (myVendorsSection) myVendorsSection.classList.add('d-none');
     if (adminSection) adminSection.classList.add('d-none');
+    if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
     
     // Setup logout button in admin navbar
     const logoutBtnAdminNav = document.getElementById('logoutBtnAdminNav');
@@ -142,9 +144,15 @@ window.initApp = async function initApp() {
         // Hide all sections, show choose vendors section
         if (adminSection) adminSection.classList.add('d-none');
         if (myVendorsSection) myVendorsSection.classList.add('d-none');
+        if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+        const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
+        if (completedVulnerabilitiesSection) completedVulnerabilitiesSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) tasksSection.classList.add('d-none');
         if (vendorSection) {
           vendorSection.classList.remove('d-none');
           // Initialize vendor selection to load and display vendors
+          // This will load vendors, load user's selected vendors, and setup event listeners
           if (typeof window.initVendorSelection === 'function') {
             await window.initVendorSelection();
           }
@@ -165,6 +173,11 @@ window.initApp = async function initApp() {
         // Hide all sections, show my vendors section
         if (adminSection) adminSection.classList.add('d-none');
         if (vendorSection) vendorSection.classList.add('d-none');
+        if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+        const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
+        if (completedVulnerabilitiesSection) completedVulnerabilitiesSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) tasksSection.classList.add('d-none');
         if (myVendorsSection) {
           myVendorsSection.classList.remove('d-none');
           // Load and display selected vendors
@@ -177,6 +190,90 @@ window.initApp = async function initApp() {
           link.classList.remove('active');
         });
         myVendorsNavLink.classList.add('active');
+      });
+    }
+    
+    // Setup "Vulnerabilities" nav link
+    const vulnerabilitiesNavLink = document.getElementById('vulnerabilitiesNavLink');
+    if (vulnerabilitiesNavLink) {
+      vulnerabilitiesNavLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // Hide all sections, show vulnerabilities section
+        if (adminSection) adminSection.classList.add('d-none');
+        if (vendorSection) vendorSection.classList.add('d-none');
+        if (myVendorsSection) myVendorsSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) tasksSection.classList.add('d-none');
+        const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
+        if (completedVulnerabilitiesSection) completedVulnerabilitiesSection.classList.add('d-none');
+        if (vulnerabilitiesSection) {
+          vulnerabilitiesSection.classList.remove('d-none');
+          // Load and display vulnerabilities
+          if (typeof window.loadVulnerabilities === 'function') {
+            await window.loadVulnerabilities();
+          }
+        }
+        // Update active nav link
+        document.querySelectorAll('#adminNavbar .nav-link').forEach(link => {
+          link.classList.remove('active');
+        });
+        vulnerabilitiesNavLink.classList.add('active');
+      });
+    }
+    
+    // Setup "Completed Vulnerabilities" nav link for admin
+    const completedVulnerabilitiesNavLink = document.getElementById('completedVulnerabilitiesNavLink');
+    if (completedVulnerabilitiesNavLink) {
+      completedVulnerabilitiesNavLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // Hide all sections, show completed vulnerabilities section
+        if (adminSection) adminSection.classList.add('d-none');
+        if (vendorSection) vendorSection.classList.add('d-none');
+        if (myVendorsSection) myVendorsSection.classList.add('d-none');
+        if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) tasksSection.classList.add('d-none');
+        const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
+        if (completedVulnerabilitiesSection) {
+          completedVulnerabilitiesSection.classList.remove('d-none');
+          // Load and display completed vulnerabilities
+          if (typeof window.loadCompletedVulnerabilities === 'function') {
+            await window.loadCompletedVulnerabilities();
+          }
+        }
+        // Update active nav link
+        document.querySelectorAll('#adminNavbar .nav-link').forEach(link => {
+          link.classList.remove('active');
+        });
+        completedVulnerabilitiesNavLink.classList.add('active');
+      });
+    }
+    
+    // Setup "My Tasks" nav link for admin
+    const tasksNavLinkAdmin = document.getElementById('tasksNavLinkAdmin');
+    if (tasksNavLinkAdmin) {
+      tasksNavLinkAdmin.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // Hide all sections, show tasks section
+        if (adminSection) adminSection.classList.add('d-none');
+        if (vendorSection) vendorSection.classList.add('d-none');
+        if (myVendorsSection) myVendorsSection.classList.add('d-none');
+        if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+        const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
+        if (completedVulnerabilitiesSection) completedVulnerabilitiesSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) {
+          tasksSection.classList.remove('d-none');
+          // Load and display tasks
+          if (typeof window.initTasks === 'function') {
+            await window.initTasks();
+          }
+        }
+        // Update active nav link
+        document.querySelectorAll('#adminNavbar .nav-link').forEach(link => {
+          link.classList.remove('active');
+        });
+        tasksNavLinkAdmin.classList.add('active');
       });
     }
     
@@ -200,6 +297,81 @@ window.initApp = async function initApp() {
     // Hide vendor selection and admin sections
     if (vendorSection) vendorSection.classList.add('d-none');
     if (adminSection) adminSection.classList.add('d-none');
+    if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+    
+    const companyVendorsSection = document.getElementById('companyVendorsSection');
+    
+    // Setup "Company Vendors" nav link for non-admin users
+    const companyVendorsNavLink = document.getElementById('companyVendorsNavLink');
+    if (companyVendorsNavLink) {
+      companyVendorsNavLink.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // Hide vulnerabilities and tasks, show company vendors
+        if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) tasksSection.classList.add('d-none');
+        if (companyVendorsSection) {
+          companyVendorsSection.classList.remove('d-none');
+          // Load vendors
+          if (typeof window.loadCompanyVendorsForPage === 'function') {
+            await window.loadCompanyVendorsForPage();
+          }
+        }
+        // Update active nav link
+        document.querySelectorAll('#userNavbar .nav-link').forEach(link => {
+          link.classList.remove('active');
+        });
+        companyVendorsNavLink.classList.add('active');
+      });
+    }
+    
+    // Setup "Vulnerabilities" nav link for non-admin users
+    const vulnerabilitiesNavLinkUser = document.getElementById('vulnerabilitiesNavLinkUser');
+    if (vulnerabilitiesNavLinkUser) {
+      vulnerabilitiesNavLinkUser.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // Hide company vendors and tasks, show vulnerabilities
+        if (companyVendorsSection) companyVendorsSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) tasksSection.classList.add('d-none');
+        if (vulnerabilitiesSection) {
+          vulnerabilitiesSection.classList.remove('d-none');
+          // Load vulnerabilities
+          if (typeof window.loadVulnerabilities === 'function') {
+            await window.loadVulnerabilities();
+          }
+        }
+        // Update active nav link
+        document.querySelectorAll('#userNavbar .nav-link').forEach(link => {
+          link.classList.remove('active');
+        });
+        vulnerabilitiesNavLinkUser.classList.add('active');
+      });
+    }
+    
+    // Setup "My Tasks" nav link for non-admin users
+    const tasksNavLinkUser = document.getElementById('tasksNavLinkUser');
+    if (tasksNavLinkUser) {
+      tasksNavLinkUser.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // Hide company vendors and vulnerabilities, show tasks
+        if (companyVendorsSection) companyVendorsSection.classList.add('d-none');
+        if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+        const tasksSection = document.getElementById('tasksSection');
+        if (tasksSection) {
+          tasksSection.classList.remove('d-none');
+          // Load and display tasks
+          if (typeof window.initTasks === 'function') {
+            await window.initTasks();
+          }
+        }
+        // Update active nav link
+        document.querySelectorAll('#userNavbar .nav-link').forEach(link => {
+          link.classList.remove('active');
+        });
+        tasksNavLinkUser.classList.add('active');
+      });
+    }
     
     // Initialize company vendors display for non-admin users
     if (typeof window.initCompanyVendors === 'function') {
@@ -207,6 +379,16 @@ window.initApp = async function initApp() {
       window.initCompanyVendors();
     } else {
       console.error('initCompanyVendors function not found');
+    }
+    
+    // Show Company Vendors page by default for non-admin users
+    if (companyVendorsSection) {
+      companyVendorsSection.classList.remove('d-none');
+      if (companyVendorsNavLink) companyVendorsNavLink.classList.add('active');
+      // Load vendors
+      if (typeof window.loadCompanyVendorsForPage === 'function') {
+        await window.loadCompanyVendorsForPage();
+      }
     }
   }
 }

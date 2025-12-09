@@ -6,6 +6,25 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Parse Heroku DATABASE_URL if present, otherwise use appsettings
+var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+if (!string.IsNullOrEmpty(databaseUrl))
+{
+    // Parse mysql://user:password@host:port/database format
+    var uri = new Uri(databaseUrl);
+    var connectionString = $"Server={uri.Host};Port={uri.Port};Database={uri.LocalPath.TrimStart('/')};User={uri.UserInfo.Split(':')[0]};Password={uri.UserInfo.Split(':')[1]};SslMode=Required;";
+    builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString;
+}
+// If no DATABASE_URL, check for direct connection string env var (for manual Heroku config)
+else
+{
+    var directConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
+    if (!string.IsNullOrEmpty(directConnectionString))
+    {
+        builder.Configuration["ConnectionStrings:DefaultConnection"] = directConnectionString;
+    }
+}
+
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
@@ -33,21 +52,110 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Configure port for Heroku (uses PORT env var, defaults to 5000)
+var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// Enable Swagger in all environments (including Heroku)
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseCors("AllowFrontend");
+
+// Root endpoint to test if app is running
+app.MapGet("/", () => Results.Ok(new { 
+    Message = "VulnRadar API is running", 
+    Swagger = "/swagger",
+    Timestamp = DateTime.UtcNow 
+}))
+.WithName("Root")
+.WithOpenApi();
 
 // Only redirect to HTTPS in production
 if (!app.Environment.IsDevelopment())
 {
 app.UseHttpsRedirection();
+}
+
+// Helper function to determine TLP rating based on realistic factors
+// TLP is about information sensitivity and distribution, NOT severity
+// Uses a hash of CVE ID + source to ensure independence from severity
+static string DetermineTlpRating(string? source, string? cveId, DateTime? publishedDate)
+{
+    // If no source or CVE ID, it's likely internal/private information - RED
+    if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(cveId))
+    {
+        return "RED";
+    }
+
+    // Use a hash of CVE ID to create variation independent of severity
+    // This ensures TLP and severity are truly independent
+    var hashInput = $"{cveId}_{source}";
+    var hash = hashInput.GetHashCode();
+    var hashMod = Math.Abs(hash % 100); // 0-99
+
+    // If source is NVD (National Vulnerability Database), it's publicly available
+    if (source.Equals("NVD", StringComparison.OrdinalIgnoreCase))
+    {
+        if (publishedDate.HasValue)
+        {
+            var daysSincePublished = (DateTime.Now - publishedDate.Value).TotalDays;
+            
+            // Very recent (within 7 days) - mix of AMBER and RED based on hash
+            if (daysSincePublished <= 7)
+            {
+                // 60% AMBER, 40% RED (sensitive new disclosures)
+                return hashMod < 60 ? "AMBER" : "RED";
+            }
+            // Recent (within 30 days) - mix of AMBER and GREEN
+            else if (daysSincePublished <= 30)
+            {
+                // 70% AMBER, 30% GREEN
+                return hashMod < 70 ? "AMBER" : "GREEN";
+            }
+            // Older but still within 90 days - mix of GREEN and AMBER
+            else if (daysSincePublished <= 90)
+            {
+                // 80% GREEN, 20% AMBER
+                return hashMod < 80 ? "GREEN" : "AMBER";
+            }
+        }
+        
+        // Older NVD entries - mostly GREEN but some variation
+        // 85% GREEN, 10% AMBER, 5% RED (some may still be sensitive)
+        if (hashMod < 85) return "GREEN";
+        if (hashMod < 95) return "AMBER";
+        return "RED";
+    }
+
+    // If source is CVE or has CVE ID but not from NVD - varied distribution
+    if (!string.IsNullOrEmpty(cveId) && cveId.StartsWith("CVE-", StringComparison.OrdinalIgnoreCase))
+    {
+        if (publishedDate.HasValue)
+        {
+            var daysSincePublished = (DateTime.Now - publishedDate.Value).TotalDays;
+            if (daysSincePublished <= 30)
+            {
+                // Recent non-NVD CVEs - 50% AMBER, 30% RED, 20% GREEN
+                if (hashMod < 50) return "AMBER";
+                if (hashMod < 80) return "RED";
+                return "GREEN";
+            }
+        }
+        // Older non-NVD CVEs - 70% GREEN, 20% AMBER, 10% RED
+        if (hashMod < 70) return "GREEN";
+        if (hashMod < 90) return "AMBER";
+        return "RED";
+    }
+
+    // Internal/private sources without CVE - mostly RED but some variation
+    // 80% RED, 15% AMBER, 5% GREEN
+    if (hashMod < 80) return "RED";
+    if (hashMod < 95) return "AMBER";
+    return "GREEN";
 }
 
 // Helper function to authenticate user from token (handles both test and Firebase tokens)
@@ -102,12 +210,16 @@ app.MapPost("/api/auth/verify-token", async (VerifyTokenRequest request, Firebas
             });
         }
         
+        // Log role and companyId for debugging
+        Console.WriteLine($"VerifyToken - Email: {firebaseUser.Email}, Role: {request.Role}, CompanyId: {request.CompanyId}");
+        
         // Get or create user in database
         var dbUser = await dbService.GetUserByFirebaseUidAsync(firebaseUser.Uid);
         
         if (dbUser == null)
         {
             // Create new user in database with role and company if provided (during signup)
+            Console.WriteLine($"Creating new user in database - Role: {request.Role}, CompanyId: {request.CompanyId}");
             await dbService.CreateOrUpdateUserFromFirebaseAsync(
                 firebaseUser.Uid,
                 firebaseUser.Email,
@@ -118,6 +230,11 @@ app.MapPost("/api/auth/verify-token", async (VerifyTokenRequest request, Firebas
             
             // Get the newly created user
             dbUser = await dbService.GetUserByFirebaseUidAsync(firebaseUser.Uid);
+            Console.WriteLine($"User created successfully - Email: {dbUser?.Email}, Role: {dbUser?.Role}, Company: {dbUser?.CompanyName}");
+        }
+        else
+        {
+            Console.WriteLine($"User already exists in database - Email: {dbUser.Email}, Role: {dbUser.Role}");
         }
 
         // Set email verified status
@@ -917,6 +1034,10 @@ app.MapGet("/api/vulnerabilities", async () =>
                      severity_score, severity_level, affected_products, vendor_id, is_duplicate, 
                      duplicate_of_id, created_at, updated_at 
                      FROM Vulnerabilities 
+                     WHERE (description NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR description IS NULL)
+                       AND (description NOT LIKE '%Rejected reason:%' OR description IS NULL)
+                       AND (title NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR title IS NULL)
+                       AND severity_level != 'Unknown'
                      ORDER BY created_at DESC 
                      LIMIT 100";
         using var command = new MySqlCommand(query, connection);
@@ -954,7 +1075,67 @@ app.MapGet("/api/vulnerabilities", async () =>
         return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
     }
 })
-.WithName("GetAllVulnerabilities")
+.WithName("GetVulnerabilities")
+.WithOpenApi();
+
+// Get single vulnerability by ID endpoint
+app.MapGet("/api/vulnerabilities/{id}", async (int id) =>
+{
+    try
+    {
+        using var connection = new MySqlConnection(
+            app.Configuration.GetConnectionString("DefaultConnection"));
+        
+        await connection.OpenAsync();
+        
+        var query = @"SELECT v.id, v.cve_id, v.title, v.description, v.source, v.source_url, 
+                     v.published_date, v.severity_score, v.severity_level, v.affected_products, 
+                     v.vendor_id, ven.name as vendor_name, v.created_at, v.updated_at
+                     FROM Vulnerabilities v
+                     LEFT JOIN Vendors ven ON v.vendor_id = ven.id
+                     WHERE v.id = @id
+                       AND (v.description NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR v.description IS NULL)
+                       AND (v.description NOT LIKE '%Rejected reason:%' OR v.description IS NULL)
+                       AND (v.title NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR v.title IS NULL)";
+        
+        using var command = new MySqlCommand(query, connection);
+        command.Parameters.AddWithValue("@id", id);
+        using var reader = await command.ExecuteReaderAsync();
+        
+        if (!await reader.ReadAsync())
+        {
+            await connection.CloseAsync();
+            return Results.NotFound(new { Success = false, Message = "Vulnerability not found" });
+        }
+
+        var vulnerability = new
+        {
+            Id = reader.GetInt32("id"),
+            CveId = reader.IsDBNull(reader.GetOrdinal("cve_id")) ? null : reader.GetString("cve_id"),
+            Title = reader.GetString("title"),
+            Description = reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString("description"),
+            Source = reader.GetString("source"),
+            SourceUrl = reader.IsDBNull(reader.GetOrdinal("source_url")) ? null : reader.GetString("source_url"),
+            PublishedDate = reader.IsDBNull(reader.GetOrdinal("published_date")) ? null : reader.GetDateTime("published_date").ToString("yyyy-MM-dd"),
+            SeverityScore = reader.IsDBNull(reader.GetOrdinal("severity_score")) ? (decimal?)null : reader.GetDecimal("severity_score"),
+            SeverityLevel = reader.GetString("severity_level"),
+            AffectedProducts = reader.IsDBNull(reader.GetOrdinal("affected_products")) ? null : reader.GetString("affected_products"),
+            VendorId = reader.IsDBNull(reader.GetOrdinal("vendor_id")) ? (int?)null : reader.GetInt32("vendor_id"),
+            VendorName = reader.IsDBNull(reader.GetOrdinal("vendor_name")) ? null : reader.GetString("vendor_name"),
+            CreatedAt = reader.GetDateTime("created_at"),
+            UpdatedAt = reader.GetDateTime("updated_at")
+        };
+        
+        await connection.CloseAsync();
+        
+        return Results.Ok(new { Success = true, Vulnerability = vulnerability });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+})
+.WithName("GetVulnerabilityById")
 .WithOpenApi();
 
 // Ingest vulnerability endpoint
@@ -1031,14 +1212,18 @@ app.MapPost("/api/vulnerabilities/ingest", async (VulnerabilityIngestRequest req
             ? System.Text.Json.JsonSerializer.Serialize(request.RawData) 
             : null;
 
+        // Determine TLP rating based on realistic factors (source, CVE status, published date)
+        // TLP is about information sensitivity, NOT severity
+        string tlpRating = DetermineTlpRating(request.Source, request.CveId, request.PublishedDate);
+
         var insertQuery = @"
             INSERT INTO Vulnerabilities (
                 cve_id, title, description, source, source_url, published_date,
-                severity_score, severity_level, affected_products, vendor_id, raw_data, is_duplicate
+                severity_score, severity_level, tlp_rating, affected_products, vendor_id, raw_data, is_duplicate
             )
             VALUES (
                 @cveId, @title, @description, @source, @sourceUrl, @publishedDate,
-                @severityScore, @severityLevel, @affectedProducts, @vendorId, @rawData, FALSE
+                @severityScore, @severityLevel, @tlpRating, @affectedProducts, @vendorId, @rawData, FALSE
             )";
 
         using var insertCommand = new MySqlCommand(insertQuery, connection);
@@ -1050,6 +1235,7 @@ app.MapPost("/api/vulnerabilities/ingest", async (VulnerabilityIngestRequest req
         insertCommand.Parameters.AddWithValue("@publishedDate", request.PublishedDate.HasValue ? request.PublishedDate.Value.Date : (object)DBNull.Value);
         insertCommand.Parameters.AddWithValue("@severityScore", request.SeverityScore ?? (object)DBNull.Value);
         insertCommand.Parameters.AddWithValue("@severityLevel", request.SeverityLevel);
+        insertCommand.Parameters.AddWithValue("@tlpRating", tlpRating);
         insertCommand.Parameters.AddWithValue("@affectedProducts", request.AffectedProducts ?? (object)DBNull.Value);
         insertCommand.Parameters.AddWithValue("@vendorId", request.VendorId ?? (object)DBNull.Value);
         insertCommand.Parameters.AddWithValue("@rawData", rawDataJson ?? (object)DBNull.Value);
@@ -1355,6 +1541,19 @@ app.MapPost("/api/vulnerabilities/download-all", async () =>
                     {
                         var cve = vulnElement.GetProperty("cve");
                         var cveId = cve.GetProperty("id").GetString();
+                        
+                        // Check if CVE is rejected/invalid - skip these
+                        if (cve.TryGetProperty("vulnStatus", out var vulnStatus))
+                        {
+                            var status = vulnStatus.GetString();
+                            if (status == "Rejected" || status == "REJECTED")
+                            {
+                                // Skip rejected CVEs
+                                continue;
+                            }
+                        }
+                        
+                        // Also check description for rejection keywords
                         var descriptions = cve.GetProperty("descriptions");
                         var descriptionElement = descriptions.EnumerateArray()
                             .FirstOrDefault(d => d.TryGetProperty("lang", out var lang) && lang.GetString() == "en");
@@ -1362,6 +1561,14 @@ app.MapPost("/api/vulnerabilities/download-all", async () =>
                         if (descriptionElement.ValueKind != JsonValueKind.Undefined)
                         {
                             description = descriptionElement.GetProperty("value").GetString();
+                            
+                            // Skip if description indicates rejection
+                            if (!string.IsNullOrEmpty(description) && 
+                                (description.Contains("DO NOT USE THIS CANDIDATE NUMBER", StringComparison.OrdinalIgnoreCase) ||
+                                 description.Contains("Rejected reason:", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                continue;
+                            }
                         }
 
                         // Get CVSS score if available
@@ -1453,16 +1660,20 @@ app.MapPost("/api/vulnerabilities/download-all", async () =>
                             continue;
                         }
 
+                        // Determine TLP rating based on realistic factors (source, CVE status, published date)
+                        // TLP is about information sensitivity, NOT severity
+                        string tlpRating = DetermineTlpRating("NVD", cveId, publishedDate);
+
                         // Insert vulnerability
                         var title = $"{cveId}: {(description != null && description.Length > 0 ? description.Substring(0, Math.Min(500, description.Length)) : "No description")}";
                         var insertQuery = @"
                             INSERT INTO Vulnerabilities (
                                 cve_id, title, description, source, source_url, published_date,
-                                severity_score, severity_level, affected_products, vendor_id, raw_data, is_duplicate
+                                severity_score, severity_level, tlp_rating, affected_products, vendor_id, raw_data, is_duplicate
                             )
                             VALUES (
                                 @cveId, @title, @description, @source, @sourceUrl, @publishedDate,
-                                @severityScore, @severityLevel, @affectedProducts, @vendorId, @rawData, FALSE
+                                @severityScore, @severityLevel, @tlpRating, @affectedProducts, @vendorId, @rawData, FALSE
                             )";
 
                         using var insertCommand = new MySqlCommand(insertQuery, connection);
@@ -1474,6 +1685,7 @@ app.MapPost("/api/vulnerabilities/download-all", async () =>
                         insertCommand.Parameters.AddWithValue("@publishedDate", publishedDate.HasValue ? publishedDate.Value.Date : (object)DBNull.Value);
                         insertCommand.Parameters.AddWithValue("@severityScore", severityScore ?? (object)DBNull.Value);
                         insertCommand.Parameters.AddWithValue("@severityLevel", severityLevel);
+                        insertCommand.Parameters.AddWithValue("@tlpRating", tlpRating);
                         insertCommand.Parameters.AddWithValue("@affectedProducts", affectedProducts.Count > 0 ? string.Join(", ", affectedProducts) : (object)DBNull.Value);
                         insertCommand.Parameters.AddWithValue("@vendorId", vendor.Id);
                         insertCommand.Parameters.AddWithValue("@rawData", jsonContent);
@@ -1525,21 +1737,95 @@ app.MapPost("/api/vulnerabilities/download-all", async () =>
 .WithName("DownloadAllVulnerabilities")
 .WithOpenApi();
 
-// Get all tasks endpoint
-app.MapGet("/api/tasks", async () =>
+// Get tasks endpoint (filtered by user role)
+app.MapGet("/api/tasks", async (HttpRequest request, FirebaseService firebaseService, DatabaseService dbService) =>
 {
     try
     {
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+        {
+            return Results.Unauthorized();
+        }
+
+        var token = authHeader.Substring(7);
+        var dbUser = await AuthenticateUserAsync(token, firebaseService, dbService);
+
+        if (dbUser == null)
+        {
+            return Results.Unauthorized();
+        }
+
         using var connection = new MySqlConnection(
             app.Configuration.GetConnectionString("DefaultConnection"));
         
         await connection.OpenAsync();
         
-        var query = @"SELECT id, vulnerability_id, company_id, assigned_by_user_id, assigned_to_user_id, 
-                     priority, status, notes, created_at, updated_at, resolved_at 
-                     FROM Tasks 
-                     ORDER BY created_at DESC";
+        // Get user ID and role
+        var userIdQuery = "SELECT id, role FROM Users WHERE email = @email OR firebase_uid = @uid LIMIT 1";
+        using var userIdCommand = new MySqlCommand(userIdQuery, connection);
+        userIdCommand.Parameters.AddWithValue("@email", dbUser.Email);
+        userIdCommand.Parameters.AddWithValue("@uid", dbUser.Uid);
+        using var userIdReader = await userIdCommand.ExecuteReaderAsync();
+        
+        if (!await userIdReader.ReadAsync())
+        {
+            await connection.CloseAsync();
+            return Results.Ok(new { Success = true, Tasks = new List<object>() });
+        }
+
+        var userId = userIdReader.GetInt32("id");
+        var userRole = userIdReader.IsDBNull(userIdReader.GetOrdinal("role")) ? "employee" : userIdReader.GetString("role");
+        await userIdReader.CloseAsync();
+
+        // Get user's company
+        var companyQuery = "SELECT company_id FROM UserCompanies WHERE user_id = @userId LIMIT 1";
+        using var companyCommand = new MySqlCommand(companyQuery, connection);
+        companyCommand.Parameters.AddWithValue("@userId", userId);
+        var companyId = await companyCommand.ExecuteScalarAsync();
+
+        if (companyId == null)
+        {
+            await connection.CloseAsync();
+            return Results.Ok(new { Success = true, Tasks = new List<object>() });
+        }
+
+        // Build query based on role
+        string query;
+        if (userRole?.ToLower() == "admin")
+        {
+            // Admins see all tasks for their company
+            query = @"
+                SELECT t.id, t.vulnerability_id, t.company_id, t.assigned_by_user_id, t.assigned_to_user_id, 
+                       t.priority, t.status, t.notes, t.created_at, t.updated_at, t.resolved_at,
+                       v.cve_id, v.title, v.severity_level,
+                       u1.email as assigned_by_email, u2.email as assigned_to_email
+                FROM Tasks t
+                INNER JOIN Vulnerabilities v ON t.vulnerability_id = v.id
+                LEFT JOIN Users u1 ON t.assigned_by_user_id = u1.id
+                LEFT JOIN Users u2 ON t.assigned_to_user_id = u2.id
+                WHERE t.company_id = @companyId
+                ORDER BY t.created_at DESC";
+        }
+        else
+        {
+            // Employees/Managers see only their assigned tasks
+            query = @"
+                SELECT t.id, t.vulnerability_id, t.company_id, t.assigned_by_user_id, t.assigned_to_user_id, 
+                       t.priority, t.status, t.notes, t.created_at, t.updated_at, t.resolved_at,
+                       v.cve_id, v.title, v.severity_level,
+                       u1.email as assigned_by_email, u2.email as assigned_to_email
+                FROM Tasks t
+                INNER JOIN Vulnerabilities v ON t.vulnerability_id = v.id
+                LEFT JOIN Users u1 ON t.assigned_by_user_id = u1.id
+                LEFT JOIN Users u2 ON t.assigned_to_user_id = u2.id
+                WHERE t.assigned_to_user_id = @userId AND t.company_id = @companyId
+                ORDER BY t.created_at DESC";
+        }
+
         using var command = new MySqlCommand(query, connection);
+        command.Parameters.AddWithValue("@userId", userId);
+        command.Parameters.AddWithValue("@companyId", companyId);
         using var reader = await command.ExecuteReaderAsync();
         
         var tasks = new List<object>();
@@ -1557,7 +1843,12 @@ app.MapGet("/api/tasks", async () =>
                 Notes = reader.IsDBNull(reader.GetOrdinal("notes")) ? null : reader.GetString("notes"),
                 CreatedAt = reader.GetDateTime("created_at"),
                 UpdatedAt = reader.GetDateTime("updated_at"),
-                ResolvedAt = reader.IsDBNull(reader.GetOrdinal("resolved_at")) ? null : reader.GetDateTime("resolved_at").ToString("yyyy-MM-dd HH:mm:ss")
+                ResolvedAt = reader.IsDBNull(reader.GetOrdinal("resolved_at")) ? null : (DateTime?)reader.GetDateTime("resolved_at"),
+                CveId = reader.GetString("cve_id"),
+                Title = reader.GetString("title"),
+                SeverityLevel = reader.GetString("severity_level"),
+                AssignedByEmail = reader.IsDBNull(reader.GetOrdinal("assigned_by_email")) ? null : reader.GetString("assigned_by_email"),
+                AssignedToEmail = reader.IsDBNull(reader.GetOrdinal("assigned_to_email")) ? null : reader.GetString("assigned_to_email")
             });
         }
         
@@ -1570,7 +1861,443 @@ app.MapGet("/api/tasks", async () =>
         return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
     }
 })
-.WithName("GetAllTasks")
+.WithName("GetTasks")
+.WithOpenApi();
+
+// Assign vulnerability to user endpoint
+app.MapPost("/api/tasks", async (HttpRequest request, AssignTaskRequest taskRequest, FirebaseService firebaseService, DatabaseService dbService) =>
+{
+    try
+    {
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+        {
+            return Results.Unauthorized();
+        }
+
+        var token = authHeader.Substring(7);
+        var dbUser = await AuthenticateUserAsync(token, firebaseService, dbService);
+
+        if (dbUser == null)
+        {
+            return Results.Unauthorized();
+        }
+
+        using var connection = new MySqlConnection(
+            app.Configuration.GetConnectionString("DefaultConnection"));
+        
+        await connection.OpenAsync();
+
+        // Get user ID and role (must be admin)
+        var userIdQuery = "SELECT id, role FROM Users WHERE email = @email OR firebase_uid = @uid LIMIT 1";
+        using var userIdCommand = new MySqlCommand(userIdQuery, connection);
+        userIdCommand.Parameters.AddWithValue("@email", dbUser.Email);
+        userIdCommand.Parameters.AddWithValue("@uid", dbUser.Uid);
+        using var userIdReader = await userIdCommand.ExecuteReaderAsync();
+        
+        if (!await userIdReader.ReadAsync())
+        {
+            await connection.CloseAsync();
+            return Results.Unauthorized();
+        }
+
+        var assignedByUserId = userIdReader.GetInt32("id");
+        var userRole = userIdReader.IsDBNull(userIdReader.GetOrdinal("role")) ? "employee" : userIdReader.GetString("role");
+        await userIdReader.CloseAsync();
+
+        if (userRole?.ToLower() != "admin")
+        {
+            await connection.CloseAsync();
+            return Results.Forbid();
+        }
+
+        // Get company ID from vulnerability
+        var vulnQuery = "SELECT vendor_id FROM Vulnerabilities WHERE id = @vulnId LIMIT 1";
+        using var vulnCommand = new MySqlCommand(vulnQuery, connection);
+        vulnCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
+        var vendorId = await vulnCommand.ExecuteScalarAsync();
+
+        if (vendorId == null)
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "Vulnerability not found" });
+        }
+
+        // Get company ID from user
+        var companyQuery = "SELECT company_id FROM UserCompanies WHERE user_id = @userId LIMIT 1";
+        using var companyCommand = new MySqlCommand(companyQuery, connection);
+        companyCommand.Parameters.AddWithValue("@userId", assignedByUserId);
+        var companyId = await companyCommand.ExecuteScalarAsync();
+
+        if (companyId == null)
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "Company not found" });
+        }
+
+        // Check if task already exists
+        var checkQuery = "SELECT id FROM Tasks WHERE vulnerability_id = @vulnId AND company_id = @companyId AND assigned_to_user_id = @assignedToUserId LIMIT 1";
+        using var checkCommand = new MySqlCommand(checkQuery, connection);
+        checkCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
+        checkCommand.Parameters.AddWithValue("@companyId", companyId);
+        checkCommand.Parameters.AddWithValue("@assignedToUserId", taskRequest.AssignedToUserId);
+        var existingTask = await checkCommand.ExecuteScalarAsync();
+
+        if (existingTask != null)
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "Task already assigned to this user" });
+        }
+
+        // Insert task
+        var insertQuery = @"
+            INSERT INTO Tasks (vulnerability_id, company_id, assigned_by_user_id, assigned_to_user_id, priority, status, notes)
+            VALUES (@vulnId, @companyId, @assignedByUserId, @assignedToUserId, @priority, 'pending', @notes)";
+        
+        using var insertCommand = new MySqlCommand(insertQuery, connection);
+        insertCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
+        insertCommand.Parameters.AddWithValue("@companyId", companyId);
+        insertCommand.Parameters.AddWithValue("@assignedByUserId", assignedByUserId);
+        insertCommand.Parameters.AddWithValue("@assignedToUserId", taskRequest.AssignedToUserId);
+        insertCommand.Parameters.AddWithValue("@priority", taskRequest.Priority ?? "Medium");
+        insertCommand.Parameters.AddWithValue("@notes", string.IsNullOrEmpty(taskRequest.Notes) ? (object)DBNull.Value : taskRequest.Notes);
+
+        await insertCommand.ExecuteNonQueryAsync();
+        var taskId = (int)insertCommand.LastInsertedId;
+
+        await connection.CloseAsync();
+        
+        return Results.Ok(new { Success = true, Message = "Task assigned successfully", TaskId = taskId });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+})
+.WithName("AssignTask")
+.WithOpenApi();
+
+// Claim vulnerability (self-assign) endpoint
+app.MapPost("/api/tasks/claim", async (HttpRequest request, ClaimTaskRequest taskRequest, FirebaseService firebaseService, DatabaseService dbService) =>
+{
+    try
+    {
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+        {
+            return Results.Unauthorized();
+        }
+
+        var token = authHeader.Substring(7);
+        var dbUser = await AuthenticateUserAsync(token, firebaseService, dbService);
+
+        if (dbUser == null)
+        {
+            return Results.Unauthorized();
+        }
+
+        using var connection = new MySqlConnection(
+            app.Configuration.GetConnectionString("DefaultConnection"));
+        
+        await connection.OpenAsync();
+
+        // Get user ID
+        var userIdQuery = "SELECT id, role FROM Users WHERE email = @email OR firebase_uid = @uid LIMIT 1";
+        using var userIdCommand = new MySqlCommand(userIdQuery, connection);
+        userIdCommand.Parameters.AddWithValue("@email", dbUser.Email);
+        userIdCommand.Parameters.AddWithValue("@uid", dbUser.Uid);
+        using var userIdReader = await userIdCommand.ExecuteReaderAsync();
+        
+        if (!await userIdReader.ReadAsync())
+        {
+            await connection.CloseAsync();
+            return Results.Unauthorized();
+        }
+
+        var userId = userIdReader.GetInt32("id");
+        var userRole = userIdReader.IsDBNull(userIdReader.GetOrdinal("role")) ? "employee" : userIdReader.GetString("role");
+        await userIdReader.CloseAsync();
+
+        // Only employees and managers can claim (not admins)
+        if (userRole?.ToLower() == "admin")
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "Admins should use the assign feature instead." });
+        }
+
+        // Get company ID
+        var companyQuery = "SELECT company_id FROM UserCompanies WHERE user_id = @userId LIMIT 1";
+        using var companyCommand = new MySqlCommand(companyQuery, connection);
+        companyCommand.Parameters.AddWithValue("@userId", userId);
+        var companyId = await companyCommand.ExecuteScalarAsync();
+
+        if (companyId == null)
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "Company not found" });
+        }
+
+        // Check if task already exists for this user (only active tasks, not closed)
+        var checkUserQuery = "SELECT id FROM Tasks WHERE vulnerability_id = @vulnId AND company_id = @companyId AND assigned_to_user_id = @userId AND status != 'closed' LIMIT 1";
+        using var checkUserCommand = new MySqlCommand(checkUserQuery, connection);
+        checkUserCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
+        checkUserCommand.Parameters.AddWithValue("@companyId", companyId);
+        checkUserCommand.Parameters.AddWithValue("@userId", userId);
+        var existingUserTask = await checkUserCommand.ExecuteScalarAsync();
+
+        if (existingUserTask != null)
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "You have already claimed this vulnerability. Check 'My Tasks' to track your progress." });
+        }
+
+        // Check if vulnerability is already assigned to someone else (only active tasks)
+        var checkAssignedQuery = "SELECT id, assigned_to_user_id FROM Tasks WHERE vulnerability_id = @vulnId AND company_id = @companyId AND status != 'closed' LIMIT 1";
+        using var checkAssignedCommand = new MySqlCommand(checkAssignedQuery, connection);
+        checkAssignedCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
+        checkAssignedCommand.Parameters.AddWithValue("@companyId", companyId);
+        var existingAssignedTask = await checkAssignedCommand.ExecuteScalarAsync();
+
+        if (existingAssignedTask != null)
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "This vulnerability has already been assigned to another user." });
+        }
+
+        // Get vulnerability severity for priority
+        var vulnQuery = "SELECT severity_level FROM Vulnerabilities WHERE id = @vulnId LIMIT 1";
+        using var vulnCommand = new MySqlCommand(vulnQuery, connection);
+        vulnCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
+        var severityLevel = await vulnCommand.ExecuteScalarAsync() as string;
+        
+        // Map severity to priority
+        string priority = "Medium";
+        if (severityLevel?.ToLower() == "critical") priority = "Critical";
+        else if (severityLevel?.ToLower() == "high") priority = "High";
+        else if (severityLevel?.ToLower() == "low") priority = "Low";
+
+        // Insert self-assigned task (assigned_by = assigned_to = current user)
+        var insertQuery = @"
+            INSERT INTO Tasks (vulnerability_id, company_id, assigned_by_user_id, assigned_to_user_id, priority, status, notes)
+            VALUES (@vulnId, @companyId, @userId, @userId, @priority, 'pending', @notes)";
+        
+        using var insertCommand = new MySqlCommand(insertQuery, connection);
+        insertCommand.Parameters.AddWithValue("@vulnId", taskRequest.VulnerabilityId);
+        insertCommand.Parameters.AddWithValue("@companyId", companyId);
+        insertCommand.Parameters.AddWithValue("@userId", userId);
+        insertCommand.Parameters.AddWithValue("@priority", priority);
+        insertCommand.Parameters.AddWithValue("@notes", string.IsNullOrEmpty(taskRequest.Notes) ? (object)DBNull.Value : "Self-assigned: Starting work on this vulnerability.");
+
+        await insertCommand.ExecuteNonQueryAsync();
+        var taskId = (int)insertCommand.LastInsertedId;
+
+        await connection.CloseAsync();
+        
+        return Results.Ok(new { Success = true, Message = "Vulnerability claimed successfully", TaskId = taskId });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+})
+.WithName("ClaimVulnerability")
+.WithOpenApi();
+
+// Update task status endpoint
+app.MapPut("/api/tasks/{taskId}", async (HttpRequest request, int taskId, UpdateTaskRequest updateRequest, FirebaseService firebaseService, DatabaseService dbService) =>
+{
+    try
+    {
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+        {
+            return Results.Unauthorized();
+        }
+
+        var token = authHeader.Substring(7);
+        var dbUser = await AuthenticateUserAsync(token, firebaseService, dbService);
+
+        if (dbUser == null)
+        {
+            return Results.Unauthorized();
+        }
+
+        using var connection = new MySqlConnection(
+            app.Configuration.GetConnectionString("DefaultConnection"));
+        
+        await connection.OpenAsync();
+
+        // Get user ID
+        var userIdQuery = "SELECT id, role FROM Users WHERE email = @email OR firebase_uid = @uid LIMIT 1";
+        using var userIdCommand = new MySqlCommand(userIdQuery, connection);
+        userIdCommand.Parameters.AddWithValue("@email", dbUser.Email);
+        userIdCommand.Parameters.AddWithValue("@uid", dbUser.Uid);
+        using var userIdReader = await userIdCommand.ExecuteReaderAsync();
+        
+        if (!await userIdReader.ReadAsync())
+        {
+            await connection.CloseAsync();
+            return Results.Unauthorized();
+        }
+
+        var userId = userIdReader.GetInt32("id");
+        var userRole = userIdReader.IsDBNull(userIdReader.GetOrdinal("role")) ? "employee" : userIdReader.GetString("role");
+        await userIdReader.CloseAsync();
+        
+        // Validate status based on role - only prevent non-admins from closing
+        if (userRole?.ToLower() != "admin" && updateRequest.Status?.ToLower() == "closed")
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "Only administrators can close tasks." });
+        }
+
+        // Check if task exists and user has permission
+        var checkQuery = "SELECT assigned_to_user_id, company_id FROM Tasks WHERE id = @taskId LIMIT 1";
+        using var checkCommand = new MySqlCommand(checkQuery, connection);
+        checkCommand.Parameters.AddWithValue("@taskId", taskId);
+        using var checkReader = await checkCommand.ExecuteReaderAsync();
+        
+        if (!await checkReader.ReadAsync())
+        {
+            await connection.CloseAsync();
+            return Results.NotFound(new { Success = false, Message = "Task not found" });
+        }
+
+        var assignedToUserId = checkReader.GetInt32("assigned_to_user_id");
+        var companyId = checkReader.GetInt32("company_id");
+        await checkReader.CloseAsync();
+
+        // Only assigned user or admin can update
+        if (assignedToUserId != userId && userRole?.ToLower() != "admin")
+        {
+            await connection.CloseAsync();
+            return Results.Forbid();
+        }
+
+        // Update task
+        var resolvedAt = updateRequest.Status?.ToLower() == "resolved" || updateRequest.Status?.ToLower() == "closed" 
+            ? DateTime.UtcNow 
+            : (object)DBNull.Value;
+
+        var updateQuery = @"
+            UPDATE Tasks 
+            SET status = @status, notes = @notes, resolved_at = @resolvedAt, updated_at = CURRENT_TIMESTAMP
+            WHERE id = @taskId";
+        
+        using var updateCommand = new MySqlCommand(updateQuery, connection);
+        updateCommand.Parameters.AddWithValue("@taskId", taskId);
+        updateCommand.Parameters.AddWithValue("@status", updateRequest.Status ?? "pending");
+        updateCommand.Parameters.AddWithValue("@notes", string.IsNullOrEmpty(updateRequest.Notes) ? (object)DBNull.Value : updateRequest.Notes);
+        updateCommand.Parameters.AddWithValue("@resolvedAt", resolvedAt);
+
+        await updateCommand.ExecuteNonQueryAsync();
+
+        await connection.CloseAsync();
+        
+        return Results.Ok(new { Success = true, Message = "Task updated successfully" });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+})
+.WithName("UpdateTask")
+.WithOpenApi();
+
+// Get users in company endpoint (for assignment dropdown)
+app.MapGet("/api/companies/{companyId}/users", async (HttpRequest request, int companyId, FirebaseService firebaseService, DatabaseService dbService) =>
+{
+    try
+    {
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+        {
+            return Results.Unauthorized();
+        }
+
+        var token = authHeader.Substring(7);
+        var dbUser = await AuthenticateUserAsync(token, firebaseService, dbService);
+
+        if (dbUser == null)
+        {
+            return Results.Unauthorized();
+        }
+
+        using var connection = new MySqlConnection(
+            app.Configuration.GetConnectionString("DefaultConnection"));
+        
+        await connection.OpenAsync();
+
+        // Get user role (must be admin)
+        var userIdQuery = "SELECT id, role FROM Users WHERE email = @email OR firebase_uid = @uid LIMIT 1";
+        using var userIdCommand = new MySqlCommand(userIdQuery, connection);
+        userIdCommand.Parameters.AddWithValue("@email", dbUser.Email);
+        userIdCommand.Parameters.AddWithValue("@uid", dbUser.Uid);
+        using var userIdReader = await userIdCommand.ExecuteReaderAsync();
+        
+        if (!await userIdReader.ReadAsync())
+        {
+            await connection.CloseAsync();
+            return Results.Unauthorized();
+        }
+
+        var userRole = userIdReader.IsDBNull(userIdReader.GetOrdinal("role")) ? "employee" : userIdReader.GetString("role");
+        await userIdReader.CloseAsync();
+
+        if (userRole?.ToLower() != "admin")
+        {
+            await connection.CloseAsync();
+            return Results.Forbid();
+        }
+
+        // Get users in company (exclude admins - they don't need to be assigned tasks)
+        var query = @"
+            SELECT u.id, u.email, u.role, u.full_name
+            FROM Users u
+            INNER JOIN UserCompanies uc ON u.id = uc.user_id
+            WHERE uc.company_id = @companyId
+              AND (u.role IS NULL OR LOWER(u.role) != 'admin')
+            ORDER BY u.email";
+        
+        using var command = new MySqlCommand(query, connection);
+        command.Parameters.AddWithValue("@companyId", companyId);
+        using var reader = await command.ExecuteReaderAsync();
+        
+        var users = new List<object>();
+        while (await reader.ReadAsync())
+        {
+            var fullName = reader.IsDBNull(reader.GetOrdinal("full_name")) ? null : reader.GetString("full_name");
+            // Split full_name into first and last name if it contains a space
+            string? firstName = null;
+            string? lastName = null;
+            if (!string.IsNullOrEmpty(fullName))
+            {
+                var nameParts = fullName.Split(new[] { ' ' }, 2, StringSplitOptions.RemoveEmptyEntries);
+                if (nameParts.Length > 0) firstName = nameParts[0];
+                if (nameParts.Length > 1) lastName = nameParts[1];
+            }
+            
+            users.Add(new
+            {
+                Id = reader.GetInt32("id"),
+                Email = reader.GetString("email"),
+                Role = reader.IsDBNull(reader.GetOrdinal("role")) ? "employee" : reader.GetString("role"),
+                FirstName = firstName,
+                LastName = lastName,
+                FullName = fullName
+            });
+        }
+        
+        await connection.CloseAsync();
+        
+        return Results.Ok(new { Success = true, Users = users });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+})
+.WithName("GetCompanyUsers")
 .WithOpenApi();
 
 // Get all vulnerability ratings endpoint
@@ -1794,6 +2521,424 @@ app.MapGet("/api/audit-logs", async () =>
     }
 })
 .WithName("GetAllAuditLogs")
+.WithOpenApi();
+
+// Get vulnerabilities for user's company with role-based filtering
+app.MapGet("/api/vulnerabilities/company", async (HttpRequest request, FirebaseService firebaseService, DatabaseService dbService) =>
+{
+    try
+    {
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+        {
+            return Results.Unauthorized();
+        }
+
+        var token = authHeader.Substring(7);
+        var dbUser = await AuthenticateUserAsync(token, firebaseService, dbService);
+
+        if (dbUser == null)
+        {
+            return Results.Unauthorized();
+        }
+
+        // Get optional TLP filter from query string (for admins)
+        var tlpFilterParam = request.Query["tlpRating"].ToString().ToUpper();
+        bool hasTlpFilter = !string.IsNullOrEmpty(tlpFilterParam) && 
+                           (tlpFilterParam == "RED" || tlpFilterParam == "AMBER" || tlpFilterParam == "GREEN");
+
+        using var connection = new MySqlConnection(
+            app.Configuration.GetConnectionString("DefaultConnection"));
+        
+        await connection.OpenAsync();
+
+        // Get user ID and role
+        var userIdQuery = "SELECT id, role FROM Users WHERE email = @email OR firebase_uid = @uid LIMIT 1";
+        using var userIdCommand = new MySqlCommand(userIdQuery, connection);
+        userIdCommand.Parameters.AddWithValue("@email", dbUser.Email);
+        userIdCommand.Parameters.AddWithValue("@uid", dbUser.Uid);
+        using var userIdReader = await userIdCommand.ExecuteReaderAsync();
+        
+        int userId = 0;
+        string userRole = "";
+        if (await userIdReader.ReadAsync())
+        {
+            userId = userIdReader.GetInt32("id");
+            userRole = userIdReader.GetString("role").ToLower().Trim();
+        }
+        await userIdReader.CloseAsync();
+        
+        // Log role for debugging
+        Console.WriteLine($"User {dbUser.Email} has role: '{userRole}' (userId: {userId})");
+
+        if (userId == 0)
+        {
+            await connection.CloseAsync();
+            return Results.Ok(new { Success = true, Vulnerabilities = new List<object>() });
+        }
+
+        // Get user's company
+        var companyQuery = @"
+            SELECT uc.company_id
+            FROM UserCompanies uc
+            WHERE uc.user_id = @userId
+            LIMIT 1";
+        using var companyCommand = new MySqlCommand(companyQuery, connection);
+        companyCommand.Parameters.AddWithValue("@userId", userId);
+        var companyId = await companyCommand.ExecuteScalarAsync();
+
+        if (companyId == null)
+        {
+            await connection.CloseAsync();
+            return Results.Ok(new { Success = true, Vulnerabilities = new List<object>() });
+        }
+
+        // Get company's vendor IDs
+        var vendorIdsQuery = @"
+            SELECT DISTINCT cv.vendor_id
+            FROM CompanyVendors cv
+            WHERE cv.company_id = @companyId AND cv.is_active = TRUE";
+        using var vendorIdsCommand = new MySqlCommand(vendorIdsQuery, connection);
+        vendorIdsCommand.Parameters.AddWithValue("@companyId", companyId);
+        using var vendorIdsReader = await vendorIdsCommand.ExecuteReaderAsync();
+        
+        var companyVendorIds = new List<int>();
+        while (await vendorIdsReader.ReadAsync())
+        {
+            companyVendorIds.Add(vendorIdsReader.GetInt32("vendor_id"));
+        }
+        await vendorIdsReader.CloseAsync();
+
+        if (companyVendorIds.Count == 0)
+        {
+            await connection.CloseAsync();
+            return Results.Ok(new { Success = true, Vulnerabilities = new List<object>(), Message = "No vendors selected for company" });
+        }
+
+        // Build query to get vulnerabilities for company's vendors
+        // Filter out rejected/invalid CVEs and closed vulnerabilities
+        // Include task assignment information
+        // No relevance scoring - just show vendor-matched vulnerabilities
+        // Filter by TLP rating based on user role
+        string tlpFilter = "";
+        if (userRole == "admin")
+        {
+            // Admins can see all TLP ratings, or filter by specific rating if provided
+            if (hasTlpFilter)
+            {
+                tlpFilter = $"v.tlp_rating = '{tlpFilterParam}'";
+            }
+            else
+            {
+                // No filter - show all TLP ratings
+                tlpFilter = "1=1"; // Always true condition
+            }
+        }
+        else if (userRole == "manager")
+        {
+            // Managers see GREEN and AMBER (moderately sensitive and shareable)
+            tlpFilter = "v.tlp_rating IN ('GREEN', 'AMBER')";
+        }
+        else
+        {
+            // Employees see GREEN (can share within community)
+            tlpFilter = "v.tlp_rating = 'GREEN'";
+        }
+
+        // Build additional filter for assigned vulnerabilities
+        // All users (including admins) should not see assigned vulnerabilities on the main vulnerabilities page
+        // Exclude vulnerabilities that have an active task (not closed)
+        string assignedFilter = "AND NOT EXISTS (SELECT 1 FROM Tasks t2 WHERE t2.vulnerability_id = v.id AND t2.company_id = @companyId AND t2.status != 'closed')";
+
+        var vulnerabilitiesQuery = @"
+            SELECT DISTINCT
+                v.id, v.cve_id, v.title, v.description, v.source, v.source_url, 
+                v.published_date, v.severity_score, v.severity_level, v.tlp_rating, v.affected_products,
+                v.vendor_id, ven.name as vendor_name,
+                t.id as task_id, t.status as task_status,
+                u.email as assigned_to_email, u.full_name as assigned_to_name
+            FROM Vulnerabilities v
+            INNER JOIN Vendors ven ON v.vendor_id = ven.id
+            LEFT JOIN Tasks t ON v.id = t.vulnerability_id AND t.company_id = @companyId AND t.status != 'closed'
+            LEFT JOIN Users u ON t.assigned_to_user_id = u.id
+            WHERE v.vendor_id IN (" + string.Join(",", companyVendorIds) + @")
+              AND v.is_duplicate = FALSE
+              AND (v.description NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR v.description IS NULL)
+              AND (v.description NOT LIKE '%Rejected reason:%' OR v.description IS NULL)
+              AND (v.title NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR v.title IS NULL)
+              AND v.severity_level != 'Unknown'
+              AND " + tlpFilter + @"
+              " + assignedFilter + @"
+            ORDER BY v.published_date DESC
+            LIMIT 500";
+
+        var vulnerabilities = new List<object>();
+        using var vulnCommand = new MySqlCommand(vulnerabilitiesQuery, connection);
+        vulnCommand.Parameters.AddWithValue("@companyId", companyId);
+        using var vulnReader = await vulnCommand.ExecuteReaderAsync();
+
+        while (await vulnReader.ReadAsync())
+        {
+            var severityLevel = vulnReader.GetString("severity_level");
+            // TLP filtering is now done in SQL query, so all results here are already filtered correctly
+
+            // Get task assignment info
+            var taskIdOrdinal = vulnReader.GetOrdinal("task_id");
+            var taskStatusOrdinal = vulnReader.GetOrdinal("task_status");
+            var assignedToEmailOrdinal = vulnReader.GetOrdinal("assigned_to_email");
+            var assignedToNameOrdinal = vulnReader.GetOrdinal("assigned_to_name");
+            
+            int? taskId = vulnReader.IsDBNull(taskIdOrdinal) ? null : vulnReader.GetInt32(taskIdOrdinal);
+            string? taskStatus = vulnReader.IsDBNull(taskStatusOrdinal) ? null : vulnReader.GetString(taskStatusOrdinal);
+            string? assignedToEmail = vulnReader.IsDBNull(assignedToEmailOrdinal) ? null : vulnReader.GetString(assignedToEmailOrdinal);
+            string? assignedToName = vulnReader.IsDBNull(assignedToNameOrdinal) ? null : vulnReader.GetString(assignedToNameOrdinal);
+
+            vulnerabilities.Add(new
+            {
+                Id = vulnReader.GetInt32("id"),
+                CveId = vulnReader.IsDBNull(vulnReader.GetOrdinal("cve_id")) ? null : vulnReader.GetString("cve_id"),
+                Title = vulnReader.GetString("title"),
+                Description = vulnReader.IsDBNull(vulnReader.GetOrdinal("description")) ? null : vulnReader.GetString("description"),
+                Source = vulnReader.GetString("source"),
+                SourceUrl = vulnReader.IsDBNull(vulnReader.GetOrdinal("source_url")) ? null : vulnReader.GetString("source_url"),
+                PublishedDate = vulnReader.IsDBNull(vulnReader.GetOrdinal("published_date")) ? null : vulnReader.GetDateTime("published_date").ToString("yyyy-MM-dd"),
+                SeverityScore = vulnReader.IsDBNull(vulnReader.GetOrdinal("severity_score")) ? (decimal?)null : vulnReader.GetDecimal("severity_score"),
+                SeverityLevel = vulnReader.GetString("severity_level"),
+                TlpRating = vulnReader.IsDBNull(vulnReader.GetOrdinal("tlp_rating")) ? null : vulnReader.GetString("tlp_rating"),
+                AffectedProducts = vulnReader.IsDBNull(vulnReader.GetOrdinal("affected_products")) ? null : vulnReader.GetString("affected_products"),
+                VendorId = vulnReader.IsDBNull(vulnReader.GetOrdinal("vendor_id")) ? (int?)null : vulnReader.GetInt32("vendor_id"),
+                VendorName = vulnReader.IsDBNull(vulnReader.GetOrdinal("vendor_name")) ? null : vulnReader.GetString("vendor_name"),
+                TaskId = taskId,
+                TaskStatus = taskStatus,
+                AssignedToEmail = assignedToEmail,
+                AssignedToName = assignedToName
+            });
+        }
+
+        await connection.CloseAsync();
+        
+        return Results.Ok(new { 
+            Success = true, 
+            Count = vulnerabilities.Count, 
+            Vulnerabilities = vulnerabilities,
+            UserRole = userRole
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+})
+.WithName("GetCompanyVulnerabilities")
+.WithOpenApi();
+
+// Get completed vulnerabilities endpoint (admin only - for their company)
+app.MapGet("/api/vulnerabilities/completed", async (HttpRequest request, FirebaseService firebaseService, DatabaseService dbService) =>
+{
+    try
+    {
+        var authHeader = request.Headers["Authorization"].ToString();
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
+        {
+            return Results.Unauthorized();
+        }
+
+        var token = authHeader.Substring(7);
+        var dbUser = await AuthenticateUserAsync(token, firebaseService, dbService);
+
+        if (dbUser == null)
+        {
+            return Results.Unauthorized();
+        }
+
+        using var connection = new MySqlConnection(
+            app.Configuration.GetConnectionString("DefaultConnection"));
+        
+        await connection.OpenAsync();
+
+        // Get user ID and role
+        var userIdQuery = "SELECT id, role FROM Users WHERE email = @email OR firebase_uid = @uid LIMIT 1";
+        using var userIdCommand = new MySqlCommand(userIdQuery, connection);
+        userIdCommand.Parameters.AddWithValue("@email", dbUser.Email);
+        userIdCommand.Parameters.AddWithValue("@uid", dbUser.Uid);
+        using var userIdReader = await userIdCommand.ExecuteReaderAsync();
+        
+        int userId = 0;
+        string userRole = "";
+        if (await userIdReader.ReadAsync())
+        {
+            userId = userIdReader.GetInt32("id");
+            userRole = userIdReader.IsDBNull(userIdReader.GetOrdinal("role")) ? "employee" : userIdReader.GetString("role");
+        }
+        await userIdReader.CloseAsync();
+
+        // Only admins can view completed vulnerabilities
+        if (userRole?.ToLower() != "admin")
+        {
+            await connection.CloseAsync();
+            return Results.Json(new { Success = false, Message = "Only administrators can view completed vulnerabilities." }, statusCode: 403);
+        }
+
+        // Get user's company
+        var companyQuery = @"
+            SELECT uc.company_id
+            FROM UserCompanies uc
+            WHERE uc.user_id = @userId
+            LIMIT 1";
+        using var companyCommand = new MySqlCommand(companyQuery, connection);
+        companyCommand.Parameters.AddWithValue("@userId", userId);
+        var companyIdObj = await companyCommand.ExecuteScalarAsync();
+
+        if (companyIdObj == null)
+        {
+            await connection.CloseAsync();
+            return Results.Ok(new { Success = true, Vulnerabilities = new List<object>(), Message = "No company associated with user" });
+        }
+
+        int companyId = Convert.ToInt32(companyIdObj);
+
+        // Get completed (closed) vulnerabilities for the company
+        var completedVulnerabilitiesQuery = @"
+            SELECT 
+                v.id, v.cve_id, v.title, v.description, v.source, v.source_url, 
+                v.published_date, v.severity_score, v.severity_level, v.tlp_rating, v.affected_products,
+                v.vendor_id, ven.name as vendor_name,
+                t.id as task_id, t.status as task_status, t.company_id, t.resolved_at,
+                u.email as assigned_to_email, u.full_name as assigned_to_name,
+                c.name as company_name
+            FROM Vulnerabilities v
+            INNER JOIN Vendors ven ON v.vendor_id = ven.id
+            INNER JOIN Tasks t ON v.id = t.vulnerability_id AND t.company_id = @companyId AND t.status = 'closed'
+            LEFT JOIN Users u ON t.assigned_to_user_id = u.id
+            LEFT JOIN Companies c ON t.company_id = c.id
+            WHERE v.is_duplicate = FALSE
+              AND (v.description NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR v.description IS NULL)
+              AND (v.description NOT LIKE '%Rejected reason:%' OR v.description IS NULL)
+              AND (v.title NOT LIKE '%DO NOT USE THIS CANDIDATE NUMBER%' OR v.title IS NULL)
+              AND v.severity_level != 'Unknown'
+            ORDER BY t.resolved_at DESC, v.published_date DESC
+            LIMIT 1000";
+
+        var vulnerabilities = new List<object>();
+        using var vulnCommand = new MySqlCommand(completedVulnerabilitiesQuery, connection);
+        vulnCommand.Parameters.AddWithValue("@companyId", companyId);
+        using var vulnReader = await vulnCommand.ExecuteReaderAsync();
+
+        while (await vulnReader.ReadAsync())
+        {
+            // Get task assignment info - check if columns exist and are not null
+            int? taskId = null;
+            string? taskStatus = null;
+            string? assignedToEmail = null;
+            string? assignedToName = null;
+            string? companyName = null;
+            DateTime? resolvedAt = null;
+            
+            try
+            {
+                var taskIdOrdinal = vulnReader.GetOrdinal("task_id");
+                if (!vulnReader.IsDBNull(taskIdOrdinal))
+                {
+                    taskId = vulnReader.GetInt32(taskIdOrdinal);
+                }
+            }
+            catch { }
+            
+            try
+            {
+                var taskStatusOrdinal = vulnReader.GetOrdinal("task_status");
+                if (!vulnReader.IsDBNull(taskStatusOrdinal))
+                {
+                    taskStatus = vulnReader.GetString(taskStatusOrdinal);
+                }
+            }
+            catch { }
+            
+            try
+            {
+                var assignedToEmailOrdinal = vulnReader.GetOrdinal("assigned_to_email");
+                if (!vulnReader.IsDBNull(assignedToEmailOrdinal))
+                {
+                    assignedToEmail = vulnReader.GetString(assignedToEmailOrdinal);
+                }
+            }
+            catch { }
+            
+            try
+            {
+                var assignedToNameOrdinal = vulnReader.GetOrdinal("assigned_to_name");
+                if (!vulnReader.IsDBNull(assignedToNameOrdinal))
+                {
+                    assignedToName = vulnReader.GetString(assignedToNameOrdinal);
+                }
+            }
+            catch { }
+            
+            try
+            {
+                var companyNameOrdinal = vulnReader.GetOrdinal("company_name");
+                if (!vulnReader.IsDBNull(companyNameOrdinal))
+                {
+                    companyName = vulnReader.GetString(companyNameOrdinal);
+                }
+            }
+            catch { }
+            
+            try
+            {
+                var resolvedAtOrdinal = vulnReader.GetOrdinal("resolved_at");
+                if (!vulnReader.IsDBNull(resolvedAtOrdinal))
+                {
+                    resolvedAt = vulnReader.GetDateTime(resolvedAtOrdinal);
+                }
+            }
+            catch { }
+
+            vulnerabilities.Add(new
+            {
+                Id = vulnReader.GetInt32("id"),
+                CveId = vulnReader.IsDBNull(vulnReader.GetOrdinal("cve_id")) ? null : vulnReader.GetString("cve_id"),
+                Title = vulnReader.GetString("title"),
+                Description = vulnReader.IsDBNull(vulnReader.GetOrdinal("description")) ? null : vulnReader.GetString("description"),
+                Source = vulnReader.GetString("source"),
+                SourceUrl = vulnReader.IsDBNull(vulnReader.GetOrdinal("source_url")) ? null : vulnReader.GetString("source_url"),
+                PublishedDate = vulnReader.IsDBNull(vulnReader.GetOrdinal("published_date")) ? null : vulnReader.GetDateTime("published_date").ToString("yyyy-MM-dd"),
+                SeverityScore = vulnReader.IsDBNull(vulnReader.GetOrdinal("severity_score")) ? (decimal?)null : vulnReader.GetDecimal("severity_score"),
+                SeverityLevel = vulnReader.GetString("severity_level"),
+                TlpRating = vulnReader.IsDBNull(vulnReader.GetOrdinal("tlp_rating")) ? null : vulnReader.GetString("tlp_rating"),
+                AffectedProducts = vulnReader.IsDBNull(vulnReader.GetOrdinal("affected_products")) ? null : vulnReader.GetString("affected_products"),
+                VendorId = vulnReader.IsDBNull(vulnReader.GetOrdinal("vendor_id")) ? (int?)null : vulnReader.GetInt32("vendor_id"),
+                VendorName = vulnReader.IsDBNull(vulnReader.GetOrdinal("vendor_name")) ? null : vulnReader.GetString("vendor_name"),
+                TaskId = taskId,
+                TaskStatus = taskStatus,
+                CompanyId = companyId, // Use the outer scope companyId
+                CompanyName = companyName,
+                AssignedToEmail = assignedToEmail,
+                AssignedToName = assignedToName,
+                ResolvedAt = resolvedAt?.ToString("yyyy-MM-dd HH:mm:ss")
+            });
+        }
+        
+        await connection.CloseAsync();
+        
+        return Results.Ok(new { 
+            Success = true, 
+            Count = vulnerabilities.Count, 
+            Vulnerabilities = vulnerabilities
+        });
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error in GetAllVulnerabilities: {ex.Message}");
+        Console.WriteLine($"Stack trace: {ex.StackTrace}");
+        if (ex.InnerException != null)
+        {
+            Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
+        }
+        return Results.BadRequest(new { Success = false, Message = $"Error: {ex.Message}" });
+    }
+})
+.WithName("GetCompletedVulnerabilities")
 .WithOpenApi();
 
 app.Run();

@@ -211,4 +211,61 @@ body {
   border-left: 4px solid #28a745;
 }
 
+/* Modern card hover effect */
+.hover-shadow {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-shadow:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Company Vendors Page - Modern Styles */
+#companyVendorsPageList .card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+#companyVendorsPageList .card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12) !important;
+}
+
+#companyVendorsPageList .card-body {
+  position: relative;
+}
+
+/* Statistics cards gradient animations */
+#companyVendorsPageList .card[style*="gradient"] {
+  position: relative;
+  overflow: hidden;
+}
+
+#companyVendorsPageList .card[style*="gradient"]::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+  50% { transform: translate(-50%, -50%) rotate(180deg); }
+}
+
+/* Section headers */
+#companyVendorsPageList h4 {
+  color: #2d3748;
+  letter-spacing: -0.3px;
+}
+
+#companyVendorsPageList .text-muted {
+  color: #718096 !important;
+}
 

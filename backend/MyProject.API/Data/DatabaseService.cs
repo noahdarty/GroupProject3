@@ -191,7 +191,7 @@ public class DatabaseService
             // Create new user
             var insertQuery = @"
                 INSERT INTO Users (username, email, password_hash, full_name, role, tlp_rating, firebase_uid, company_name, is_active)
-                VALUES (@username, @email, @passwordHash, @fullName, @role, 'WHITE', @firebaseUid, @companyName, TRUE)";
+                VALUES (@username, @email, @passwordHash, @fullName, @role, 'GREEN', @firebaseUid, @companyName, TRUE)";
 
             using var insertCommand = new MySqlCommand(insertQuery, connection);
             insertCommand.Parameters.AddWithValue("@username", email.Split('@')[0]);

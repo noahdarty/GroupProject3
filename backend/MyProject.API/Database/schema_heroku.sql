@@ -1,7 +1,6 @@
 -- VulnRadar Database Schema
--- MySQL Database Setup
-
-USE vulnradar;
+-- MySQL Database Setup for Heroku
+-- (No USE statement - connect directly to the database)
 
 -- 1. Users Table
 CREATE TABLE IF NOT EXISTS Users (
@@ -82,6 +81,7 @@ CREATE TABLE IF NOT EXISTS Vulnerabilities (
     published_date DATE,
     severity_score DECIMAL(3,1),
     severity_level ENUM('Critical', 'High', 'Medium', 'Low', 'Unknown') NOT NULL DEFAULT 'Unknown',
+    tlp_rating ENUM('RED', 'AMBER', 'GREEN') NOT NULL DEFAULT 'GREEN',
     affected_products TEXT,
     vendor_id INT,
     raw_data JSON,
@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS Vulnerabilities (
     INDEX idx_cve_id (cve_id),
     INDEX idx_source (source),
     INDEX idx_severity_level (severity_level),
+    INDEX idx_tlp_rating (tlp_rating),
     INDEX idx_vendor_id (vendor_id),
     INDEX idx_is_duplicate (is_duplicate),
     INDEX idx_published_date (published_date)
@@ -183,5 +184,4 @@ CREATE TABLE IF NOT EXISTS AuditLogs (
     INDEX idx_entity_type (entity_type),
     INDEX idx_created_at (created_at)
 );
-
 

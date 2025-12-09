@@ -223,8 +223,9 @@ function setupLoginForm() {
       }
 
       // Verify token with backend and get user info
+      // Use PascalCase to match backend model
       const verifyRequest = {
-        idToken: idToken
+        IdToken: idToken
       };
       
       // Include role and companyId if available (from signup or first login after signup)
@@ -235,11 +236,8 @@ function setupLoginForm() {
         verifyRequest.CompanyId = companyId;
       }
       
-      // Clear pending values after using them
-      if (!isRegister && (role || companyId)) {
-        localStorage.removeItem('pendingRole');
-        localStorage.removeItem('pendingCompanyId');
-      }
+      // Log for debugging
+      console.log('Sending verify request:', JSON.stringify(verifyRequest, null, 2));
 
       const response = await fetch(`${window.API_BASE_URL}/api/auth/verify-token`, {
         method: 'POST',
@@ -267,6 +265,12 @@ function setupLoginForm() {
 
       // Backend returns PascalCase (Success), check both cases for compatibility
       if (data.Success || data.success) {
+        // Clear pending values after successful login
+        if (!isRegister && (role || companyId)) {
+          localStorage.removeItem('pendingRole');
+          localStorage.removeItem('pendingCompanyId');
+        }
+        
         // Store token and user info
         localStorage.setItem('firebaseToken', idToken);
         localStorage.setItem('user', JSON.stringify(data.User || data.user));
@@ -457,10 +461,78 @@ export async function logout() {
     await signOut(auth);
     localStorage.removeItem('firebaseToken');
     localStorage.removeItem('user');
+    localStorage.removeItem('pendingRole');
+    localStorage.removeItem('pendingCompanyId');
+    
+    // Reset login form and button state
+    const loginForm = document.getElementById('loginForm');
+    const loginBtn = document.getElementById('loginBtn');
+    const errorAlert = document.getElementById('errorAlert');
+    const successAlert = document.getElementById('successAlert');
+    const btnText = loginBtn?.querySelector('.btn-text');
+    const btnSpinner = loginBtn?.querySelector('.btn-spinner');
+    const signupFields = document.getElementById('signupFields');
+    const registerLink = document.getElementById('registerLink');
+    const loginSubtitle = document.querySelector('.login-subtitle');
+    
+    // Reset form
+    if (loginForm) {
+      loginForm.reset();
+    }
+    
+    // Reset button state
+    if (loginBtn) {
+      loginBtn.disabled = false;
+    }
+    if (btnText) {
+      btnText.textContent = 'Sign In';
+    }
+    if (btnSpinner) {
+      btnSpinner.classList.add('d-none');
+    }
+    
+    // Hide alerts
+    if (errorAlert) {
+      errorAlert.classList.add('d-none');
+      errorAlert.textContent = '';
+    }
+    if (successAlert) {
+      successAlert.classList.add('d-none');
+      successAlert.textContent = '';
+    }
+    
+    // Reset signup fields
+    if (signupFields) {
+      signupFields.classList.add('d-none');
+      const signupRole = document.getElementById('signupRole');
+      const signupCompany = document.getElementById('signupCompany');
+      if (signupRole) {
+        signupRole.removeAttribute('required');
+        signupRole.value = '';
+      }
+      if (signupCompany) {
+        signupCompany.removeAttribute('required');
+        signupCompany.value = '';
+      }
+    }
+    
+    // Reset register link
+    if (registerLink) {
+      registerLink.innerHTML = 'Don\'t have an account? <strong>Sign up</strong>';
+    }
+    if (loginSubtitle) {
+      loginSubtitle.textContent = 'Sign in to your account';
+    }
+    
     // Show login section, hide app section
     checkAuthStatus();
   } catch (error) {
     console.error('Logout error:', error);
+    // Even if logout fails, still try to reset UI
+    const loginSection = document.getElementById('loginSection');
+    const appSection = document.getElementById('appSection');
+    if (loginSection) loginSection.classList.remove('d-none');
+    if (appSection) appSection.classList.add('d-none');
   }
 }
 
