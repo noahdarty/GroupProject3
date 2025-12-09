@@ -137,6 +137,9 @@ function displayTasks(tasks) {
     
     // Check if task is self-assigned
     const isSelfAssigned = assignedByUserId && assignedToUserId && assignedByUserId === assignedToUserId;
+    
+    // Check if task is closed
+    const isClosed = status?.toLowerCase() === 'closed';
 
     // Status badge colors
     let statusBadge = 'secondary';
@@ -195,6 +198,13 @@ function displayTasks(tasks) {
                   Manage Task
                 </button>
               </div>
+            ` : isClosed ? `
+              <div class="alert alert-info small mb-2">
+                <strong>Task Closed:</strong> This task has been closed by an administrator and cannot be modified.
+              </div>
+              <button class="btn btn-sm btn-secondary w-100" disabled>
+                Task Closed
+              </button>
             ` : `
               <button class="btn btn-sm btn-primary w-100 update-task-btn" data-task-id="${taskId}" data-bs-toggle="modal" data-bs-target="#updateTaskModal">
                 Update Status
