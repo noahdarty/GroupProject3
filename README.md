@@ -58,27 +58,14 @@ mysql://u6ya6l1ogtazrvrs:l15y9wr9dj2i4yla@hcm4e9frmbwfez47.cbetxkdyhwsb.us-east-
 5. **Click "OK"** to save
 6. **Double-click the connection** to connect
 7. **View tables:** Expand the database → Tables in the left sidebar
-
-3. **Connect in MySQL Workbench:**
-   - Open MySQL Workbench
-   - Click **+** to create new connection
-   - Enter the parsed values:
-     - **Hostname:** (from connection string)
-     - **Port:** 3306
-     - **Username:** (from connection string)
-     - **Password:** (from connection string)
-     - **Default Schema:** (database name from connection string)
-   - Click **Test Connection**
-   - Click **OK** to save and connect
-
-4. **View Tables:**
-   - Expand the database in left sidebar
-   - Expand "Tables"
    - You'll see: Users, Companies, Vendors, Vulnerabilities, Tasks, CompanyVendors, UserCompanies
 
-#### Method 2: Direct Connection String
+#### Method 2: Using the Connection String Directly
 
-Share the `JAWSDB_URL` value with your teacher. They can use it in any MySQL client.
+You can use the full connection string in any MySQL client that supports the format:
+```
+mysql://u6ya6l1ogtazrvrs:l15y9wr9dj2i4yla@hcm4e9frmbwfez47.cbetxkdyhwsb.us-east-1.rds.amazonaws.com:3306/qfewi9g30broii73
+```
 
 **Note:** The database is independent of the application - it can be accessed even if the app is down.
 
