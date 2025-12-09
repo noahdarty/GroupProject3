@@ -1,2 +1,2 @@
-web: cd backend/MyProject.API && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet run --no-build
+web: cd backend/MyProject.API && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet bin/Release/net8.0/MyProject.API.dll
 
