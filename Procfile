@@ -1,2 +1,3 @@
-web: cd backend/MyProject.API && dotnet bin/Release/net8.0/MyProject.API.dll --urls http://0.0.0.0:$PORT
+release: ./release.sh
+web: cd backend/MyProject.API && ASPNETCORE_URLS=http://0.0.0.0:$PORT dotnet publish/MyProject.API.dll
 
