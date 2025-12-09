@@ -781,13 +781,67 @@ app.MapPost("/api/user/vendors", async (HttpRequest request, FirebaseService fir
         companyCommand.Parameters.AddWithValue("@userId", userId);
         var companyId = await companyCommand.ExecuteScalarAsync();
 
+        // If no company, try to auto-link admin to first available company
         if (companyId == null)
         {
-            await connection.CloseAsync();
-            return Results.BadRequest(new { 
-                Success = false, 
-                Message = "User has no company assigned. Please select a company first. If you're an admin, you can link yourself to a company using the company selection or contact support." 
-            });
+            // Get user role
+            var roleQuery = "SELECT role FROM Users WHERE id = @userId LIMIT 1";
+            using var roleCommand = new MySqlCommand(roleQuery, connection);
+            roleCommand.Parameters.AddWithValue("@userId", userId);
+            var userRole = await roleCommand.ExecuteScalarAsync() as string;
+
+            // Auto-link admins to first available company
+            if (userRole?.ToLower() == "admin")
+            {
+                var firstCompanyQuery = "SELECT id, name FROM Companies ORDER BY id LIMIT 1";
+                using var firstCompanyCommand = new MySqlCommand(firstCompanyQuery, connection);
+                using var firstCompanyReader = await firstCompanyCommand.ExecuteReaderAsync();
+                
+                if (await firstCompanyReader.ReadAsync())
+                {
+                    var firstCompanyId = firstCompanyReader.GetInt32("id");
+                    var firstCompanyName = firstCompanyReader.GetString("name");
+                    await firstCompanyReader.CloseAsync();
+
+                    // Link admin to first company
+                    var linkQuery = @"
+                        INSERT INTO UserCompanies (user_id, company_id, is_primary)
+                        VALUES (@userId, @companyId, TRUE)
+                        ON DUPLICATE KEY UPDATE is_primary = TRUE";
+                    
+                    using var linkCommand = new MySqlCommand(linkQuery, connection);
+                    linkCommand.Parameters.AddWithValue("@userId", userId);
+                    linkCommand.Parameters.AddWithValue("@companyId", firstCompanyId);
+                    await linkCommand.ExecuteNonQueryAsync();
+
+                    // Update user's company_name
+                    var updateCompanyNameQuery = "UPDATE Users SET company_name = @companyName WHERE id = @userId";
+                    using var updateCompanyNameCommand = new MySqlCommand(updateCompanyNameQuery, connection);
+                    updateCompanyNameCommand.Parameters.AddWithValue("@companyName", firstCompanyName);
+                    updateCompanyNameCommand.Parameters.AddWithValue("@userId", userId);
+                    await updateCompanyNameCommand.ExecuteNonQueryAsync();
+
+                    companyId = firstCompanyId;
+                    Console.WriteLine($"Auto-linked admin user {userId} to company {firstCompanyId} ({firstCompanyName})");
+                }
+                else
+                {
+                    await firstCompanyReader.CloseAsync();
+                    await connection.CloseAsync();
+                    return Results.BadRequest(new { 
+                        Success = false, 
+                        Message = "No companies found in database. Please create a company first." 
+                    });
+                }
+            }
+            else
+            {
+                await connection.CloseAsync();
+                return Results.BadRequest(new { 
+                    Success = false, 
+                    Message = "User has no company assigned. Please contact your administrator." 
+                });
+            }
         }
 
         // Log received vendor request for debugging
