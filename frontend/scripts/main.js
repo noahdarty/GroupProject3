@@ -294,10 +294,12 @@ window.initApp = async function initApp() {
     if (adminNavbar) adminNavbar.classList.add('d-none');
     if (userNavbar) userNavbar.classList.remove('d-none');
     
-    // Hide vendor selection and admin sections
+    // Hide vendor selection, admin sections, and completed vulnerabilities (admin only)
     if (vendorSection) vendorSection.classList.add('d-none');
     if (adminSection) adminSection.classList.add('d-none');
     if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+    const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
+    if (completedVulnerabilitiesSection) completedVulnerabilitiesSection.classList.add('d-none');
     
     const companyVendorsSection = document.getElementById('companyVendorsSection');
     
