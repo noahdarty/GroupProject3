@@ -38,6 +38,8 @@ builder.Services.AddSwaggerGen(c =>
         Version = "v1",
         Description = "Vulnerability Radar API"
     });
+    // Discover all endpoints, even without .WithOpenApi()
+    c.CustomSchemaIds(type => type.FullName);
 });
 
 // Configure JSON serialization
