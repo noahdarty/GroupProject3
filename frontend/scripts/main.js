@@ -303,6 +303,10 @@ window.initApp = async function initApp() {
     const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
     if (completedVulnerabilitiesSection) completedVulnerabilitiesSection.classList.add('d-none');
     
+    // Hide tasks section initially (will be shown when user clicks "My Tasks" nav link)
+    const tasksSection = document.getElementById('tasksSection');
+    if (tasksSection) tasksSection.classList.add('d-none');
+    
     const companyVendorsSection = document.getElementById('companyVendorsSection');
     
     // Setup "Company Vendors" nav link for non-admin users
