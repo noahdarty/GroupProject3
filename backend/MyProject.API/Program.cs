@@ -2338,7 +2338,7 @@ app.MapPut("/api/tasks/{taskId}", async (HttpRequest request, int taskId, Update
         }
 
         // Check if task exists and user has permission
-        var checkQuery = "SELECT assigned_to_user_id, company_id FROM Tasks WHERE id = @taskId LIMIT 1";
+        var checkQuery = "SELECT assigned_to_user_id, company_id, status FROM Tasks WHERE id = @taskId LIMIT 1";
         using var checkCommand = new MySqlCommand(checkQuery, connection);
         checkCommand.Parameters.AddWithValue("@taskId", taskId);
         using var checkReader = await checkCommand.ExecuteReaderAsync();
@@ -2351,6 +2351,7 @@ app.MapPut("/api/tasks/{taskId}", async (HttpRequest request, int taskId, Update
 
         var assignedToUserId = checkReader.GetInt32("assigned_to_user_id");
         var companyId = checkReader.GetInt32("company_id");
+        var currentStatus = checkReader.IsDBNull(checkReader.GetOrdinal("status")) ? "pending" : checkReader.GetString("status");
         await checkReader.CloseAsync();
 
         // Only assigned user or admin can update
@@ -2358,6 +2359,13 @@ app.MapPut("/api/tasks/{taskId}", async (HttpRequest request, int taskId, Update
         {
             await connection.CloseAsync();
             return Results.Forbid();
+        }
+
+        // If task is already closed, only admins can change it
+        if (currentStatus?.ToLower() == "closed" && userRole?.ToLower() != "admin")
+        {
+            await connection.CloseAsync();
+            return Results.BadRequest(new { Success = false, Message = "This task has been closed by an administrator and cannot be modified." });
         }
 
         // Update task

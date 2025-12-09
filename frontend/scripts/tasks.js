@@ -264,7 +264,18 @@ async function loadTaskForUpdate(taskId) {
     document.getElementById('updateTaskId').value = taskId;
     const statusSelect = document.getElementById('updateTaskStatus');
     const currentStatus = task.Status || task.status || 'pending';
+    const isClosed = currentStatus?.toLowerCase() === 'closed';
+    
     statusSelect.value = currentStatus;
+    
+    // If task is closed and user is not admin, disable the status dropdown
+    if (isClosed && !isAdmin) {
+      statusSelect.disabled = true;
+      statusSelect.title = 'This task has been closed by an administrator and cannot be modified.';
+    } else {
+      statusSelect.disabled = false;
+      statusSelect.title = '';
+    }
     
     // Show "Closed" option only for admins
     const closedOption = statusSelect.querySelector('option[value="closed"]');
