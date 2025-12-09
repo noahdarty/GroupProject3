@@ -274,6 +274,24 @@ app.MapPost("/api/auth/verify-token", async (VerifyTokenRequest request, Firebas
         else
         {
             Console.WriteLine($"User already exists in database - Email: {dbUser.Email}, Role: {dbUser.Role}");
+            
+            // If role is provided and different from current role, update it
+            if (!string.IsNullOrEmpty(request.Role) && 
+                request.Role.ToLower() != dbUser.Role?.ToLower())
+            {
+                Console.WriteLine($"Updating user role from '{dbUser.Role}' to '{request.Role}'");
+                await dbService.CreateOrUpdateUserFromFirebaseAsync(
+                    firebaseUser.Uid,
+                    firebaseUser.Email,
+                    firebaseUser.DisplayName,
+                    request.Role,
+                    request.CompanyId
+                );
+                
+                // Get updated user
+                dbUser = await dbService.GetUserByFirebaseUidAsync(firebaseUser.Uid);
+                Console.WriteLine($"User role updated - Email: {dbUser?.Email}, Role: {dbUser?.Role}");
+            }
         }
 
         // Set email verified status

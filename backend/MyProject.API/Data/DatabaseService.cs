@@ -148,18 +148,44 @@ public class DatabaseService
 
         if (userId != null)
         {
-            // Update existing user with Firebase UID
-            var updateQuery = @"
-                UPDATE Users 
-                SET firebase_uid = @firebaseUid, 
-                    full_name = COALESCE(@displayName, full_name),
-                    updated_at = NOW()
-                WHERE email = @email";
+            // Update existing user with Firebase UID, role, and TLP rating if provided
+            var updateFields = new List<string> { "firebase_uid = @firebaseUid", "full_name = COALESCE(@displayName, full_name)", "updated_at = NOW()" };
+            var updateParams = new Dictionary<string, object>
+            {
+                { "@firebaseUid", firebaseUid },
+                { "@email", email },
+                { "@displayName", displayName ?? (object)DBNull.Value }
+            };
 
+            // Update role and TLP rating if role is provided
+            if (!string.IsNullOrEmpty(role))
+            {
+                var validRole = role.ToLower();
+                if (validRole == "admin" || validRole == "manager" || validRole == "employee")
+                {
+                    string tlpRating = "GREEN";
+                    if (validRole == "admin")
+                    {
+                        tlpRating = "RED";
+                    }
+                    else if (validRole == "manager")
+                    {
+                        tlpRating = "AMBER";
+                    }
+
+                    updateFields.Add("role = @role");
+                    updateFields.Add("tlp_rating = @tlpRating");
+                    updateParams.Add("@role", validRole);
+                    updateParams.Add("@tlpRating", tlpRating);
+                }
+            }
+
+            var updateQuery = $"UPDATE Users SET {string.Join(", ", updateFields)} WHERE email = @email";
             using var updateCommand = new MySqlCommand(updateQuery, connection);
-            updateCommand.Parameters.AddWithValue("@firebaseUid", firebaseUid);
-            updateCommand.Parameters.AddWithValue("@email", email);
-            updateCommand.Parameters.AddWithValue("@displayName", displayName ?? (object)DBNull.Value);
+            foreach (var param in updateParams)
+            {
+                updateCommand.Parameters.AddWithValue(param.Key, param.Value);
+            }
 
             await updateCommand.ExecuteNonQueryAsync();
             return true;
