@@ -89,9 +89,15 @@ app.UseSwaggerUI(c =>
 app.MapGet("/", () => Results.Ok(new { 
     Message = "VulnRadar API is running", 
     Swagger = "/swagger",
+    SwaggerJson = "/swagger/v1/swagger.json",
     Timestamp = DateTime.UtcNow 
 }))
 .WithName("Root")
+.WithOpenApi();
+
+// Test endpoint to verify Swagger JSON
+app.MapGet("/swagger-test", () => Results.Redirect("/swagger/v1/swagger.json"))
+.WithName("SwaggerTest")
 .WithOpenApi();
 
 // Don't use HTTPS redirection on Heroku - Heroku handles HTTPS at the load balancer
