@@ -137,6 +137,40 @@ function setupLoginForm() {
         // Send verification email for new users (use default Firebase action URL)
         await sendEmailVerification(userCredential.user);
         
+        // IMPORTANT: Call verify-token immediately after signup to create user in database with role
+        // Get Firebase ID token
+        const idToken = await userCredential.user.getIdToken();
+        
+        // Verify token with backend to create user in database with role
+        const verifyRequest = {
+          IdToken: idToken,
+          Role: role,
+          CompanyId: companyId
+        };
+        
+        try {
+          const verifyResponse = await fetch(`${window.API_BASE_URL}/api/auth/verify-token`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(verifyRequest),
+          });
+          
+          if (verifyResponse.ok) {
+            const verifyData = await verifyResponse.json();
+            console.log('User created in database with role:', verifyData);
+            // Clear pending values since we've used them
+            localStorage.removeItem('pendingRole');
+            localStorage.removeItem('pendingCompanyId');
+          } else {
+            console.warn('Failed to create user in database during signup, will retry on login');
+          }
+        } catch (error) {
+          console.warn('Error creating user in database during signup:', error);
+          // Continue anyway - user can still log in and it will be created then
+        }
+        
         // Clear any previous errors
         errorAlert.classList.add('d-none');
         
