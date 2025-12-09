@@ -125,6 +125,8 @@ window.initApp = async function initApp() {
     if (myVendorsSection) myVendorsSection.classList.add('d-none');
     if (adminSection) adminSection.classList.add('d-none');
     if (vulnerabilitiesSection) vulnerabilitiesSection.classList.add('d-none');
+    const completedVulnerabilitiesSection = document.getElementById('completedVulnerabilitiesSection');
+    if (completedVulnerabilitiesSection) completedVulnerabilitiesSection.classList.add('d-none');
     
     // Setup logout button in admin navbar
     const logoutBtnAdminNav = document.getElementById('logoutBtnAdminNav');
