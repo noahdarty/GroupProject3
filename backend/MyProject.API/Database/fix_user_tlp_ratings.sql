@@ -27,3 +27,4 @@ FROM Users
 GROUP BY role, tlp_rating
 ORDER BY role, tlp_rating;
 
+

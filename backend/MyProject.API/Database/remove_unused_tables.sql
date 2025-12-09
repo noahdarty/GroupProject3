@@ -7,3 +7,4 @@ DROP TABLE IF EXISTS VulnerabilityResolutions;
 -- Drop AuditLogs (has foreign keys)
 DROP TABLE IF EXISTS AuditLogs;
 
+
