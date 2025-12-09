@@ -9,6 +9,10 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
 
+  <Target Name="PublishAfterBuild" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <Exec Command="dotnet publish -c Release -r linux-x64 --self-contained true -o publish" WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.15" />
     <PackageReference Include="MySql.Data" Version="9.5.0" />
