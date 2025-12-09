@@ -6,25 +6,25 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Parse Heroku DATABASE_URL if present, otherwise use appsettings
+// Connection string - use environment variable if set (for Heroku), otherwise use appsettings.json (for local)
 var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 if (!string.IsNullOrEmpty(databaseUrl))
 {
-    // Parse mysql://user:password@host:port/database format
+    // Parse mysql://user:password@host:port/database format (Heroku)
     var uri = new Uri(databaseUrl);
     var connectionString = $"Server={uri.Host};Port={uri.Port};Database={uri.LocalPath.TrimStart('/')};User={uri.UserInfo.Split(':')[0]};Password={uri.UserInfo.Split(':')[1]};SslMode=Required;";
     builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString;
 }
-// If no DATABASE_URL, check for direct connection string env var (for manual Heroku config)
 else
 {
-    // Try double underscore first (correct format), then single underscore (common mistake)
+    // Check for direct connection string env var (for Heroku manual config)
     var directConnectionString = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection") 
         ?? Environment.GetEnvironmentVariable("ConnectionStrings_DefaultConnection");
     if (!string.IsNullOrEmpty(directConnectionString))
     {
         builder.Configuration["ConnectionStrings:DefaultConnection"] = directConnectionString;
     }
+    // Otherwise, appsettings.json will be used automatically (for local development)
 }
 
 // Add services to the container.
@@ -73,9 +73,12 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Configure port for Heroku (uses PORT env var, defaults to 5000)
-var port = Environment.GetEnvironmentVariable("PORT") ?? "5000";
-builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+// Port configuration - only set for Heroku, otherwise use default
+var port = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(port))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
 
 var app = builder.Build();
 
