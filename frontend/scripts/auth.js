@@ -137,15 +137,20 @@ function setupLoginForm() {
         // Send verification email for new users (use default Firebase action URL)
         await sendEmailVerification(userCredential.user);
         
-        // IMPORTANT: Call verify-token immediately after signup to create user in database with role
+        // IMPORTANT: Call verify-token immediately after signup to create user in database with role and company
         // Get Firebase ID token
         const idToken = await userCredential.user.getIdToken();
         
-        // Verify token with backend to create user in database with role
+        // Ensure companyId is a number, not null/undefined
+        const companyIdNum = companyId && !isNaN(companyId) ? parseInt(companyId) : null;
+        
+        console.log('Signup - Sending to backend:', { Role: role, CompanyId: companyIdNum, CompanyIdType: typeof companyIdNum });
+        
+        // Verify token with backend to create user in database with role and company
         const verifyRequest = {
           IdToken: idToken,
           Role: role,
-          CompanyId: companyId
+          CompanyId: companyIdNum
         };
         
         try {
@@ -159,15 +164,18 @@ function setupLoginForm() {
           
           if (verifyResponse.ok) {
             const verifyData = await verifyResponse.json();
-            console.log('User created in database with role:', verifyData);
+            console.log('User created in database with role and company:', verifyData);
+            console.log('User details:', verifyData.User);
             // Clear pending values since we've used them
             localStorage.removeItem('pendingRole');
             localStorage.removeItem('pendingCompanyId');
           } else {
-            console.warn('Failed to create user in database during signup, will retry on login');
+            const errorData = await verifyResponse.json().catch(() => ({}));
+            console.error('Failed to create user in database during signup:', errorData);
+            console.error('Response status:', verifyResponse.status, verifyResponse.statusText);
           }
         } catch (error) {
-          console.warn('Error creating user in database during signup:', error);
+          console.error('Error creating user in database during signup:', error);
           // Continue anyway - user can still log in and it will be created then
         }
         
