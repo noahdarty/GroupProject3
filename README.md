@@ -2,6 +2,10 @@
 
 A full-stack web application for managing cybersecurity vulnerabilities with role-based access control and Traffic Light Protocol (TLP) ratings.
 
+LOGINS YOU CAN USE:
+noahdarty2@gmail.com password- 123456 (manager)
+ndarty10@gmail.com password-123456 (employee)
+bioisac073@gmail.com password-123456 (admin)
 ## 🚀 Quick Access
 
 ### Live Application
